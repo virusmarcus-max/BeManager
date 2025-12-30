@@ -1,0 +1,184 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased font-sans;
+    font-family: 'Outfit', sans-serif;
+  }
+
+  /* Hide number spin buttons */
+  input::-webkit-outer-spin-button,
+  input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type=number] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/70 backdrop-blur-lg border border-white/20 shadow-xl;
+  }
+
+  .glass-panel {
+    @apply bg-white/80 backdrop-blur-md border border-slate-200/50 shadow-sm;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg shadow-violet-200 hover:shadow-violet-300 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200;
+  }
+
+  .premium-input {
+    @apply bg-slate-950 border border-slate-800 rounded-2xl px-5 py-3.5 text-white font-bold text-sm outline-none transition-all placeholder:text-slate-700 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20;
+  }
+
+  .premium-select {
+    @apply bg-slate-950 border border-slate-800 rounded-2xl px-5 py-3.5 text-white font-bold text-sm outline-none transition-all cursor-pointer appearance-none hover:border-slate-700 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236366f1' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1.25rem center;
+    background-size: 1.25rem;
+    padding-right: 3rem;
+  }
+
+  .premium-label {
+    @apply block text-[10px] font-black text-indigo-400/80 uppercase tracking-widest mb-2 ml-1;
+  }
+
+  .premium-input-light {
+    @apply bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3.5 text-slate-900 font-bold text-sm outline-none transition-all placeholder:text-slate-400 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20;
+  }
+
+  .premium-select-light {
+    @apply bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3.5 text-slate-900 font-bold text-sm outline-none transition-all cursor-pointer appearance-none hover:border-slate-300 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236366f1' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1.25rem center;
+    background-size: 1.25rem;
+    padding-right: 3rem;
+  }
+
+  .premium-label-light {
+    @apply block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1;
+  }
+}
+
+/* Custom Animations */
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-800 rounded-full hover:bg-slate-700 transition-colors;
+}
+
+/* Print Styles */
+@media print {
+  @page {
+    margin: 0.5cm;
+    size: portrait;
+    /* Default, user can change */
+  }
+
+  /* Hide EVERYTHING by default */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Unhide the Detail View Container and its children */
+  /* We use the specific class structure found in IncentivesSupervisor.tsx */
+  .lg\:col-span-8,
+  .lg\:col-span-8 * {
+    visibility: visible;
+  }
+
+  /* Position the Detail View at the top-left */
+  .lg\:col-span-8 {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background: white !important;
+  }
+
+  /* Additional Force Hides */
+  aside,
+  header,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Reset text colors for print readability */
+  .text-white,
+  .text-slate-100,
+  .text-slate-200,
+  .text-slate-300 {
+    color: #000 !important;
+  }
+
+  .text-emerald-400 {
+    color: #059669 !important;
+    /* darker emerald for print visibility */
+  }
+
+  /* Ensure backgrounds are light/white */
+  .bg-slate-900\/40,
+  .bg-slate-950,
+  .bg-slate-900 {
+    background: white !important;
+    border: none !important;
+  }
+
+  /* Ensure tables look good */
+  table {
+    width: 100% !important;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    border-bottom: 1px solid #e5e7eb !important;
+    /* slate-200 */
+    padding: 8px !important;
+  }
+
+  /* Force color printing if user enables it */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
