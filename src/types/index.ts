@@ -142,7 +142,7 @@ export interface EmployeeLog {
     establishmentId: string;
 }
 
-export type PermanentRequestType = 'morning_only' | 'afternoon_only' | 'specific_days_off' | 'max_afternoons_per_week' | 'force_full_days' | 'early_morning_shift' | 'rotating_days_off';
+export type PermanentRequestType = 'morning_only' | 'afternoon_only' | 'specific_days_off' | 'max_afternoons_per_week' | 'force_full_days' | 'early_morning_shift' | 'rotating_days_off' | 'fixed_rotating_shift';
 
 export interface PermanentRequest {
     id: string;
@@ -228,6 +228,7 @@ export interface IncentiveItem {
     // Microprestamos (Inputs from Manager)
     micros_aptacion_qty?: number;
     micros_mecanizacion_qty?: number;
+    hours_payment_qty?: number; // Hours transferred from hours bank
 
     // Responsibility Check (Just a flag or calculated? Assuming role check at runtime, but storing the bonus amount here helps)
     responsibility_bonus_amount?: number;
@@ -250,4 +251,10 @@ export interface IncentiveReport {
     value_per_captacion?: number;
     value_per_mecanizacion?: number;
     value_responsibility_bonus?: number;
+    value_per_extra_hour?: number;
+
+    // Responsibility Bonus Configuration
+    apply_bonus_responsible?: boolean;
+    apply_bonus_manager?: boolean;
+    apply_bonus_submanager?: boolean;
 }

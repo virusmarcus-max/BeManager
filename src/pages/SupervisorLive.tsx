@@ -178,7 +178,7 @@ const SupervisorLive: React.FC = () => {
 
 
     return (
-        <div className="p-8 pb-24 max-w-[1600px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 relative">
+        <div className="px-4 py-8 pb-24 max-w-[1600px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 relative">
             {/* Background Glow */}
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] bg-indigo-500/5 rounded-full blur-[120px] pointer-events-none"></div>
 
@@ -209,7 +209,7 @@ const SupervisorLive: React.FC = () => {
                                 <div className="flex flex-col">
                                     <span className="text-[10px] font-black uppercase text-indigo-300 tracking-wider">Hoy</span>
                                     <span className="font-bold text-white capitalize leading-none text-lg">
-                                        {today.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })}
+                                        {today.toLocaleDateString('es-ES')}
                                     </span>
                                 </div>
                             </div>

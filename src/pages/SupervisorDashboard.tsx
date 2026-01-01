@@ -3,32 +3,11 @@ import { useStore } from '../context/StoreContext';
 import { formatLocalDate, parseLocalDate } from '../services/dateUtils';
 import clsx from 'clsx';
 import {
-    Users,
-    TrendingUp,
-    Store,
-    ArrowUpRight,
-    Activity,
-    X,
-    ChevronLeft,
-    ChevronRight,
-    ArrowLeft,
-    CalendarDays,
-    Info,
-    Printer,
-    Building2,
-    CheckSquare,
-    Clock,
+    Users, Calendar, Clock, ArrowRight, Activity, TrendingUp, TrendingDown,
+    LayoutGrid, Building2, Package, CheckCircle2, ChevronRight, FileText, Search,
+    Store, X, ChevronLeft, ArrowLeft, CalendarDays, Info, Printer, CheckSquare, ArrowUpRight
 } from 'lucide-react';
-
-const FileText: React.FC<{ size?: number; className?: string }> = ({ size = 20, className = "" }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="16" y1="13" x2="8" y2="13" />
-        <line x1="16" y1="17" x2="8" y2="17" />
-        <line x1="10" y1="9" x2="8" y2="9" />
-    </svg>
-);
+import { DEFAULT_STORE_NAMES } from '../services/storeConfig';
 
 const SupervisorDashboard: React.FC = () => {
     const { schedules, employees, settings, timeOffRequests, tasks } = useStore();
@@ -173,14 +152,9 @@ const SupervisorDashboard: React.FC = () => {
     const storeIds = Array.from(new Set(employees.map(e => e.establishmentId)));
 
     const getStoreName = (id: string) => {
-        if (id === '1') return 'Sevilla 1';
-        if (id === '2') return 'Sevilla 2';
         const store = settings.find(s => s.establishmentId === id);
         if (store && store.storeName) return store.storeName;
-        const storeNameMap: Record<string, string> = {
-            '3': 'Malaga 2', '4': 'Cordoba', '5': 'Jerez', '6': 'Malaga 1', '7': 'Granada'
-        };
-        return storeNameMap[id] || `Tienda ${id}`;
+        return DEFAULT_STORE_NAMES[id] || `Tienda ${id}`;
     };
 
     const storeStats = storeIds.map(id => {

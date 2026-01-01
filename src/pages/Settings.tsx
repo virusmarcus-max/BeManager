@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import {
-    Save, Calendar as CalendarIcon, Clock, Mail, User, Phone, MapPin,
+    Save, Calendar as CalendarIcon, Clock, Mail, User, Phone,
     BadgeCheck, Store, Briefcase, ShoppingCart, Package, Truck, Sparkles,
-    UserCheck, ChevronDown
+    UserCheck, ChevronRight, Settings as SettingsIcon, Globe, Map, Bell
 } from 'lucide-react';
 import type { StoreSettings, WorkRole, RoleScheduleConfig } from '../types';
 import { DatePicker } from '../components/DatePicker';
 import { CustomTimePicker } from '../components/CustomTimePicker';
+import { clsx } from 'clsx';
 
 const SettingsPage: React.FC = () => {
     const { user } = useAuth();
@@ -18,6 +19,7 @@ const SettingsPage: React.FC = () => {
 
     const [formData, setFormData] = useState<StoreSettings>(getSettings(user.establishmentId));
     const [dirty, setDirty] = useState(false);
+    const [activeTab, setActiveTab] = useState<'general' | 'hours' | 'roles' | 'holidays'>('general');
     const [newHoliday, setNewHoliday] = useState('');
     const [newHolidayType, setNewHolidayType] = useState<'full' | 'afternoon' | 'closed_afternoon'>('full');
 
@@ -50,7 +52,7 @@ const SettingsPage: React.FC = () => {
                 [field]: value
             };
 
-            // Reset unrelated fields when switching types
+            // Fix for cleaning which sometimes doesn't have split type logic correctly handled in the UI
             if (field === 'type') {
                 if (value === 'morning') {
                     updatedConfig.morningEndTime = undefined;
@@ -72,95 +74,19 @@ const SettingsPage: React.FC = () => {
         setDirty(true);
     };
 
-    const renderRoleConfig = (role: WorkRole, label: string, Icon: React.ElementType, colorClass: string) => {
-        const config = formData.roleSchedules?.[role] || { startTime: '', endTime: '', type: 'morning' };
-
-        return (
-            <div className="group relative bg-slate-50 hover:bg-white border border-slate-200 hover:border-indigo-200 rounded-2xl p-5 transition-all hover:shadow-md">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                    <div className="flex items-center gap-3">
-                        <div className={`p-2.5 rounded-xl ${colorClass.replace('text-', 'bg-').replace('600', '100')} ${colorClass}`}>
-                            <Icon size={20} />
-                        </div>
-                        <span className="font-bold text-slate-700 text-sm tracking-tight">{label}</span>
-                    </div>
-
-                    <div className="relative">
-                        <select
-                            value={config.type}
-                            onChange={(e) => handleRoleScheduleChange(role, 'type', e.target.value)}
-                            className="appearance-none bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-lg pl-3 pr-8 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none shadow-sm cursor-pointer hover:border-indigo-300 transition-colors"
-                        >
-                            <option value="morning">Turno Mañana</option>
-                            <option value="afternoon">Turno Tarde</option>
-                            <option value="split">Turno Partido</option>
-                        </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                    </div>
-                </div>
-
-                <div className="flex items-center justify-end border-t border-slate-100 pt-3 mt-1">
-                    <div className="flex gap-2">
-                        {/* Morning / Start Time */}
-                        {(config.type === 'morning' || config.type === 'split') && (
-                            <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Entrada</span>
-                                <CustomTimePicker
-                                    value={config.startTime || ''}
-                                    onChange={(val) => handleRoleScheduleChange(role, 'startTime', val)}
-                                // placeholder={formData.openingHours.morningStart}
-                                />
-                                <span className="text-slate-300 mx-1">|</span>
-                                <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Salida</span>
-                                <CustomTimePicker
-                                    value={config.type === 'split' ? (config.morningEndTime || '') : (config.endTime || '')}
-                                    onChange={(val) => handleRoleScheduleChange(role, config.type === 'split' ? 'morningEndTime' : 'endTime', val)}
-                                // placeholder={formData.openingHours.morningEnd}
-                                />
-                            </div>
-                        )}
-
-                        {/* Split Separator */}
-                        {config.type === 'split' && (
-                            <div className="flex items-center justify-center w-6 text-slate-300">
-                                <Clock size={14} />
-                            </div>
-                        )}
-
-                        {/* Afternoon Time */}
-                        {(config.type === 'afternoon' || config.type === 'split') && (
-                            <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Entrada</span>
-                                <CustomTimePicker
-                                    value={config.type === 'split' ? (config.afternoonStartTime || '') : (config.startTime || '')}
-                                    onChange={(val) => handleRoleScheduleChange(role, config.type === 'split' ? 'afternoonStartTime' : 'startTime', val)}
-                                // placeholder={formData.openingHours.afternoonStart}
-                                />
-                                <span className="text-slate-300 mx-1">|</span>
-                                <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Salida</span>
-                                <CustomTimePicker
-                                    value={config.endTime || ''}
-                                    onChange={(val) => handleRoleScheduleChange(role, 'endTime', val)}
-                                // placeholder={formData.openingHours.afternoonEnd}
-                                />
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         updateSettings(formData);
         setDirty(false);
-        // Show simplified toast/alert
+        // Toast notification
         const toast = document.createElement('div');
-        toast.className = 'fixed bottom-4 right-4 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg animate-in slide-in-from-bottom duration-300 flex items-center gap-2 z-50';
-        toast.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Configuración guardada correctamente';
+        toast.className = 'fixed bottom-8 right-8 bg-indigo-600 text-white px-8 py-4 rounded-2xl shadow-[0_20px_50px_rgba(79,70,229,0.3)] animate-in slide-in-from-bottom duration-500 flex items-center gap-3 z-50 font-bold border border-indigo-400/30 backdrop-blur-md';
+        toast.innerHTML = '<div class="bg-white/20 p-1.5 rounded-lg"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></div> Configuración guardada con éxito';
         document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+        setTimeout(() => {
+            toast.classList.add('opacity-0', 'translate-y-4', 'transition-all', 'duration-500');
+            setTimeout(() => toast.remove(), 500);
+        }, 3000);
     };
 
     const toggleHoliday = (date: string) => {
@@ -177,381 +103,535 @@ const SettingsPage: React.FC = () => {
     const addHoliday = () => {
         if (!newHoliday) return;
         const exists = formData.holidays.some(h => h.date === newHoliday);
+        if (exists) return;
 
-        if (exists) {
-            alert('Este festivo ya está en la lista.');
-            return;
-        }
-
-        setFormData(prev => {
-            return {
-                ...prev,
-                holidays: [...prev.holidays, { date: newHoliday, type: newHolidayType }].sort((a, b) => a.date.localeCompare(b.date))
-            };
-        });
+        setFormData(prev => ({
+            ...prev,
+            holidays: [...prev.holidays, { date: newHoliday, type: newHolidayType }].sort((a, b) => a.date.localeCompare(b.date))
+        }));
         setDirty(true);
         setNewHoliday('');
-        setNewHolidayType('full');
     };
 
-    return (
-        <div className="max-w-6xl mx-auto pb-20">
-            {/* Header Section */}
-            <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Configuración del Establecimiento</h1>
-                    <p className="text-slate-500 mt-2 text-lg">Gestiona la información comercial, horarios y calendario laboral de {user.establishmentName}.</p>
-                </div>
+    const renderRoleConfig = (role: WorkRole, label: string, Icon: React.ElementType, colorClass: string) => {
+        const config = formData.roleSchedules?.[role] || { startTime: '', endTime: '', type: 'morning' };
 
-                <button
-                    onClick={handleSubmit}
-                    disabled={!dirty}
-                    className={`
-                        flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all shadow-md
-                        ${dirty
-                            ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105 hover:shadow-indigo-200'
-                            : 'bg-slate-200 text-slate-400 cursor-not-allowed'}
-                    `}
-                >
-                    <Save size={20} />
-                    Guardar Cambios
-                </button>
-
-            </div>
-
-
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-                {/* Left Column: Basic Info & Contact */}
-                <div className="lg:col-span-2 space-y-8">
-
-                    {/* Tarjeta: Información General */}
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
-                        <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center gap-3">
-                            <div className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
-                                <Store className="text-indigo-600" size={24} />
-                            </div>
-                            <div>
-                                <h2 className="font-bold text-slate-800 text-lg">Datos Comerciales</h2>
-                                <p className="text-slate-500 text-xs">Información básica visible</p>
-                            </div>
+        return (
+            <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                    <div className="flex items-center gap-4">
+                        <div className={clsx("p-3 rounded-2xl", colorClass.replace('text-', 'bg-').replace('600', '100'), colorClass)}>
+                            <Icon size={24} />
                         </div>
-
-                        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="md:col-span-2">
-                                <label className="block text-sm font-semibold text-slate-700 mb-2">Nombre del Establecimiento</label>
-                                <input
-                                    type="text"
-                                    value={formData.storeName}
-                                    onChange={e => handleChange('storeName', e.target.value)}
-                                    placeholder={user.establishmentName}
-                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-semibold text-slate-700 mb-2">Gerente Responsable</label>
-                                <div className="relative group">
-                                    <User size={18} className="absolute left-3 top-3 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-                                    <input
-                                        type="text"
-                                        value={formData.managerName}
-                                        onChange={e => handleChange('managerName', e.target.value)}
-                                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
-                                        placeholder="Nombre completo"
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-semibold text-slate-700 mb-2">Teléfono de Contacto</label>
-                                <div className="relative group">
-                                    <Phone size={18} className="absolute left-3 top-3 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-                                    <input
-                                        type="tel"
-                                        value={formData.phone || ''}
-                                        onChange={e => handleChange('phone', e.target.value)}
-                                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
-                                        placeholder="+34 000 000 000"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="md:col-span-2">
-                                <label className="block text-sm font-semibold text-slate-700 mb-2">Email Corporativo</label>
-                                <div className="relative group">
-                                    <Mail size={18} className="absolute left-3 top-3 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-                                    <input
-                                        type="email"
-                                        value={formData.contactEmail}
-                                        onChange={e => handleChange('contactEmail', e.target.value)}
-                                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
-                                        placeholder="ejemplo@empresa.com"
-                                    />
-                                </div>
-                            </div>
+                        <div>
+                            <h4 className="font-bold text-slate-800 text-lg">{label}</h4>
+                            <p className="text-slate-400 text-xs font-medium">Configurar tipo de jornada</p>
                         </div>
                     </div>
 
-                    {/* Tarjeta: Ubicación */}
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
-                        <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center gap-3">
-                            <div className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
-                                <MapPin className="text-rose-600" size={24} />
-                            </div>
-                            <div>
-                                <h2 className="font-bold text-slate-800 text-lg">Ubicación Física</h2>
-                                <p className="text-slate-500 text-xs">Dirección del local</p>
-                            </div>
-                        </div>
-
-                        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="md:col-span-2">
-                                <label className="block text-sm font-semibold text-slate-700 mb-2">Dirección Completa</label>
-                                <input
-                                    type="text"
-                                    value={formData.address || ''}
-                                    onChange={e => handleChange('address', e.target.value)}
-                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
-                                    placeholder="Calle Principal, 123"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-semibold text-slate-700 mb-2">Ciudad</label>
-                                <input
-                                    type="text"
-                                    value={formData.city || ''}
-                                    onChange={e => handleChange('city', e.target.value)}
-                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
-                                    placeholder="Ej: Madrid"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-semibold text-slate-700 mb-2">Código Postal</label>
-                                <input
-                                    type="text"
-                                    value={formData.zipCode || ''}
-                                    onChange={e => handleChange('zipCode', e.target.value)}
-                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
-                                    placeholder="28001"
-                                />
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Right Column: Schedule & Hours */}
-                <div className="space-y-8">
-                    {/* Tarjeta: Horarios */}
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
-                        <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center gap-3">
-                            <div className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
-                                <Clock className="text-amber-500" size={24} />
-                            </div>
-                            <div>
-                                <h2 className="font-bold text-slate-800 text-lg">Horario Laboral</h2>
-                                <p className="text-slate-500 text-xs">Apertura y cierre diario</p>
-                            </div>
-                        </div>
-
-                        <div className="p-6 space-y-6">
-                            <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
-                                <div className="flex items-center gap-2 mb-3 text-amber-800 font-bold uppercase text-xs tracking-wider">
-                                    <span className="w-2 h-2 bg-amber-500 rounded-full"></span>
-                                    Turno de Mañana
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="time"
-                                        value={formData.openingHours.morningStart}
-                                        onChange={(e) => handleTimeChange('morningStart', e.target.value)}
-                                        className="flex-1 text-center bg-white border border-amber-200 text-amber-900 rounded-lg py-2 font-mono font-medium focus:ring-2 focus:ring-amber-500 outline-none"
-                                    />
-                                    <span className="text-amber-300 font-bold">-</span>
-                                    <input
-                                        type="time"
-                                        value={formData.openingHours.morningEnd}
-                                        onChange={(e) => handleTimeChange('morningEnd', e.target.value)}
-                                        className="flex-1 text-center bg-white border border-amber-200 text-amber-900 rounded-lg py-2 font-mono font-medium focus:ring-2 focus:ring-amber-500 outline-none"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
-                                <div className="flex items-center gap-2 mb-3 text-indigo-800 font-bold uppercase text-xs tracking-wider">
-                                    <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
-                                    Turno de Tarde
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="time"
-                                        value={formData.openingHours.afternoonStart}
-                                        onChange={(e) => handleTimeChange('afternoonStart', e.target.value)}
-                                        className="flex-1 text-center bg-white border border-indigo-200 text-indigo-900 rounded-lg py-2 font-mono font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
-                                    />
-                                    <span className="text-indigo-300 font-bold">-</span>
-                                    <input
-                                        type="time"
-                                        value={formData.openingHours.afternoonEnd}
-                                        onChange={(e) => handleTimeChange('afternoonEnd', e.target.value)}
-                                        className="flex-1 text-center bg-white border border-indigo-200 text-indigo-900 rounded-lg py-2 font-mono font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Tarjeta: FESTIVOS */}
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
-                        <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center gap-3">
-                            <div className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
-                                <CalendarIcon className="text-red-500" size={24} />
-                            </div>
-                            <div>
-                                <h2 className="font-bold text-slate-800 text-lg">Festivos y Cierres</h2>
-                                <p className="text-slate-500 text-xs">Gestión de días no laborables</p>
-                            </div>
-                        </div>
-
-                        <div className="p-6">
-                            <div className="flex gap-2 mb-4">
-                                <DatePicker
-                                    value={newHoliday}
-                                    onChange={setNewHoliday}
-                                    className="flex-1 min-w-0"
-                                    variant="light"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={addHoliday}
-                                    className="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-bold hover:bg-red-600 transition-colors"
-                                >
-                                    +
-                                </button>
-                            </div>
-                            <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
-                                <label className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer transition-colors border ${newHolidayType === 'full' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200'}`}>
-                                    <input type="radio" className="hidden" name="holidayType" checked={newHolidayType === 'full'} onChange={() => setNewHolidayType('full')} />
-                                    Día Completo
-                                </label>
-                                <label className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer transition-colors border ${newHolidayType === 'afternoon' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-white text-slate-500 border-slate-200'}`}>
-                                    <input type="radio" className="hidden" name="holidayType" checked={newHolidayType === 'afternoon'} onChange={() => setNewHolidayType('afternoon')} />
-                                    Tarde Festiva
-                                </label>
-                                <label className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer transition-colors border ${newHolidayType === 'closed_afternoon' ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-white text-slate-500 border-slate-200'}`}>
-                                    <input type="radio" className="hidden" name="holidayType" checked={newHolidayType === 'closed_afternoon'} onChange={() => setNewHolidayType('closed_afternoon')} />
-                                    Cierre Tarde
-                                </label>
-                            </div>
-
-                            <div className="max-h-[300px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                                {formData.holidays.length === 0 ? (
-                                    <div className="text-center py-6 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200 italic text-sm">
-                                        No hay festivos añadidos
-                                    </div>
-                                ) : (
-                                    formData.holidays.map((h: any) => {
-                                        const date = h.date;
-                                        const type = h.type;
-                                        const dateObj = new Date(date);
-
-                                        let typeLabel = '';
-                                        let typeStyle = '';
-                                        let iconStyle = '';
-
-                                        if (type === 'full') {
-                                            typeLabel = 'Cerrado';
-                                            typeStyle = 'text-red-500';
-                                            iconStyle = 'bg-red-50 border-red-100 text-red-600';
-                                        } else if (type === 'afternoon') {
-                                            typeLabel = 'Tarde Festiva';
-                                            typeStyle = 'text-orange-500';
-                                            iconStyle = 'bg-orange-50 border-orange-100 text-orange-600';
-                                        } else {
-                                            typeLabel = 'Cierre Tarde';
-                                            typeStyle = 'text-indigo-500';
-                                            iconStyle = 'bg-indigo-50 border-indigo-100 text-indigo-600';
-                                        }
-
-                                        return (
-                                            <div key={date} className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-white hover:border-red-100 hover:shadow-sm transition-all group">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center border ${iconStyle}`}>
-                                                        <span className="text-[10px] font-bold uppercase leading-none">{dateObj.toLocaleDateString(undefined, { month: 'short' }).slice(0, 3)}</span>
-                                                        <span className="text-lg font-bold leading-none">{dateObj.getDate()}</span>
-                                                    </div>
-                                                    <div className="flex flex-col">
-                                                        <span className="text-sm font-semibold text-slate-700">{dateObj.toLocaleDateString(undefined, { weekday: 'long' })}</span>
-                                                        <span className={`text-[10px] font-bold uppercase ${typeStyle}`}>
-                                                            {typeLabel}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    onClick={() => toggleHoliday(date)}
-                                                    className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-600 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100"
-                                                >
-                                                    <BadgeCheck size={16} className="hidden" />
-                                                    {/* Using X icon logic but visually clean */}
-                                                    &times;
-                                                </button>
-                                            </div>
-                                        );
-                                    })
+                    <div className="flex p-1 bg-slate-100 rounded-xl">
+                        {(['morning', 'afternoon', 'split'] as const).map((type) => (
+                            <button
+                                key={type}
+                                onClick={() => handleRoleScheduleChange(role, 'type', type)}
+                                className={clsx(
+                                    "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                                    config.type === type
+                                        ? "bg-white text-indigo-600 shadow-sm"
+                                        : "text-slate-500 hover:text-slate-700"
                                 )}
+                            >
+                                {type === 'morning' ? 'Mañana' : type === 'afternoon' ? 'Tarde' : 'Partido'}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="space-y-3">
+                    {/* Morning / Start Section */}
+                    {(config.type === 'morning' || config.type === 'split') && (
+                        <div className={clsx(
+                            "group p-4 rounded-2xl border transition-all duration-300",
+                            config.type === 'split' ? "bg-amber-50/50 border-amber-100" : "bg-slate-50 border-slate-100"
+                        )}>
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                    <div className={clsx("w-2 h-2 rounded-full", config.type === 'split' ? "bg-amber-500" : "bg-indigo-500")} />
+                                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                        {config.type === 'split' ? 'Bloque Mañana' : 'Jornada Mañana'}
+                                    </span>
+                                </div>
+                                <Clock size={14} className="text-slate-300" />
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="flex-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block ml-1">Entrada</label>
+                                    <CustomTimePicker
+                                        className="w-full justify-between py-2.5 !bg-white"
+                                        value={config.startTime || ''}
+                                        onChange={(val) => handleRoleScheduleChange(role, 'startTime', val)}
+                                    />
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block ml-1">Salida</label>
+                                    <CustomTimePicker
+                                        className="w-full justify-between py-2.5 !bg-white"
+                                        value={config.type === 'split' ? (config.morningEndTime || '') : (config.endTime || '')}
+                                        onChange={(val) => handleRoleScheduleChange(role, config.type === 'split' ? 'morningEndTime' : 'endTime', val)}
+                                    />
+                                </div>
                             </div>
                         </div>
+                    )}
+
+                    {/* Afternoon Section */}
+                    {(config.type === 'afternoon' || config.type === 'split') && (
+                        <div className={clsx(
+                            "group p-4 rounded-2xl border transition-all duration-300",
+                            config.type === 'split' ? "bg-indigo-50/50 border-indigo-100" : "bg-slate-50 border-slate-100"
+                        )}>
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                    <div className={clsx("w-2 h-2 rounded-full", config.type === 'split' ? "bg-indigo-500" : "bg-indigo-500")} />
+                                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                        {config.type === 'split' ? 'Bloque Tarde' : 'Jornada Tarde'}
+                                    </span>
+                                </div>
+                                <Clock size={14} className="text-slate-300" />
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="flex-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block ml-1">Entrada</label>
+                                    <CustomTimePicker
+                                        className="w-full justify-between py-2.5 !bg-white"
+                                        value={config.type === 'split' ? (config.afternoonStartTime || '') : (config.startTime || '')}
+                                        onChange={(val) => handleRoleScheduleChange(role, config.type === 'split' ? 'afternoonStartTime' : 'startTime', val)}
+                                    />
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block ml-1">Salida</label>
+                                    <CustomTimePicker
+                                        className="w-full justify-between py-2.5 !bg-white"
+                                        value={config.endTime || ''}
+                                        onChange={(val) => handleRoleScheduleChange(role, 'endTime', val)}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    const tabs = [
+        { id: 'general', label: 'General', icon: Store, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+        { id: 'hours', label: 'Horarios', icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50' },
+        { id: 'roles', label: 'Puestos', icon: Briefcase, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+        { id: 'holidays', label: 'Festivos', icon: CalendarIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
+    ] as const;
+
+    return (
+        <div className="max-w-7xl mx-auto px-4 md:px-0">
+            {/* Header Moderno con Glassmorphism */}
+            <div className="relative mb-12 p-8 md:p-12 bg-white rounded-[2.5rem] overflow-hidden border border-slate-100 shadow-sm transition-all duration-500 group">
+                {/* Background Shapes */}
+                <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 bg-indigo-50 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
+                <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-64 h-64 bg-rose-50 rounded-full blur-3xl opacity-30 group-hover:opacity-60 transition-opacity duration-700" />
+
+                <div className="relative flex flex-col md:flex-row items-center justify-between gap-8">
+                    <div className="flex-1 text-center md:text-left">
+                        <div className="flex items-center justify-center md:justify-start gap-3 mb-4">
+                            <div className="bg-indigo-600 p-2.5 rounded-2xl shadow-indigo-200 shadow-lg text-white">
+                                <SettingsIcon size={24} className="animate-spin-slow" />
+                            </div>
+                            <span className="text-indigo-600 font-bold uppercase tracking-[0.2em] text-xs">Configuración Maestra</span>
+                        </div>
+                        <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight">
+                            Personaliza tu <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600">Establecimiento</span>
+                        </h1>
+                        <p className="text-slate-500 mt-4 text-lg max-w-2xl font-medium leading-relaxed">
+                            Gestiona horarios, puestos y calendarios para {user.establishmentName} de forma centralizada.
+                        </p>
                     </div>
 
-                    {/* Tarjeta: Horarios por Puesto */}
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
-                        <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center gap-3">
-                            <div className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
-                                <Briefcase className="text-emerald-600" size={24} />
-                            </div>
-                            <div>
-                                <h2 className="font-bold text-slate-800 text-lg">Horarios Específicos</h2>
-                                <p className="text-slate-500 text-xs">Configuración por puesto</p>
-                            </div>
-                        </div>
-
-                        <div className="p-6 space-y-4">
-                            {renderRoleConfig('sales_register', 'Caja de Ventas', ShoppingCart, 'text-blue-600')}
-                            {renderRoleConfig('purchase_register', 'Caja de Compras', Package, 'text-orange-600')}
-                            {renderRoleConfig('shuttle', 'Lanzadera', Truck, 'text-purple-600')}
-                            {renderRoleConfig('cleaning', 'Limpieza', Sparkles, 'text-emerald-600')}
-
-                            {/* RI Configuration */}
-                            <div className="group relative bg-slate-50 hover:bg-white border border-slate-200 hover:border-indigo-200 rounded-2xl p-5 transition-all hover:shadow-md">
-                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2.5 rounded-xl bg-violet-100 text-violet-600">
-                                            <UserCheck size={20} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="font-bold text-slate-700 text-sm tracking-tight">Reunión Individual (RI)</span>
-                                            <span className="text-[10px] text-slate-400 font-medium">Configuración especial de entrada</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="flex items-center justify-end border-t border-slate-100 pt-3 mt-1">
-                                    <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Hora de Entrada</span>
-                                        <CustomTimePicker
-                                            value={formData.individualMeetingStartTime || ''}
-                                            onChange={(val) => handleChange('individualMeetingStartTime', val)}
-                                        // placeholder="--:--"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                    <div className="flex flex-col items-center gap-4">
+                        <button
+                            onClick={handleSubmit}
+                            disabled={!dirty}
+                            className={clsx(
+                                "group relative flex items-center gap-3 px-10 py-4 rounded-[1.5rem] font-bold transition-all overflow-hidden",
+                                dirty
+                                    ? "bg-indigo-600 text-white shadow-xl shadow-indigo-100 hover:scale-[1.02] active:scale-95"
+                                    : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                            )}
+                        >
+                            <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                            <Save size={20} className={dirty ? "animate-pulse" : ""} />
+                            <span>Guardar Cambios</span>
+                        </button>
+                        {dirty && (
+                            <span className="text-amber-600 text-xs font-bold animate-bounce flex items-center gap-1.5 bg-amber-50 px-3 py-1.5 rounded-full border border-amber-100">
+                                <Bell size={12} /> Tienes cambios sin guardar
+                            </span>
+                        )}
                     </div>
                 </div>
             </div>
-        </div >
+
+            <div className="flex flex-col lg:flex-row gap-8 pb-32">
+                {/* Navigation Sidebar */}
+                <aside className="lg:w-72 flex-shrink-0">
+                    <div className="sticky top-6 space-y-2 p-2 bg-white/50 backdrop-blur-sm rounded-[2rem] border border-slate-100 shadow-sm">
+                        {tabs.map((tab) => (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                className={clsx(
+                                    "w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-bold transition-all group",
+                                    activeTab === tab.id
+                                        ? "bg-white text-indigo-600 shadow-sm border border-slate-100 outline outline-4 outline-indigo-50/50"
+                                        : "text-slate-500 hover:bg-white hover:text-slate-900"
+                                )}
+                            >
+                                <div className={clsx(
+                                    "p-2 rounded-xl transition-all",
+                                    activeTab === tab.id ? tab.bg : "bg-slate-50 group-hover:bg-white"
+                                )}>
+                                    <tab.icon size={20} className={activeTab === tab.id ? tab.color : "text-slate-400 group-hover:text-slate-600"} />
+                                </div>
+                                <span className="flex-1 text-left">{tab.label}</span>
+                                {activeTab === tab.id && <ChevronRight size={18} className="text-indigo-400" />}
+                            </button>
+                        ))}
+                    </div>
+                </aside>
+
+                {/* Main Content Area */}
+                <main className="flex-1 min-w-0">
+                    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm min-h-[600px] flex flex-col">
+                        {/* Tab Content Header */}
+                        <div className="p-8 border-b border-slate-50">
+                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                                {tabs.find(t => t.id === activeTab)?.label}
+                                <div className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+                            </h2>
+                            <p className="text-slate-400 text-sm mt-1 font-medium italic">
+                                {activeTab === 'general' && 'Información básica y contacto del local'}
+                                {activeTab === 'hours' && 'Rango horario de apertura del establecimiento'}
+                                {activeTab === 'roles' && 'Personalizar turnos según la función del empleado'}
+                                {activeTab === 'holidays' && 'Días no laborables y festividades especiales'}
+                            </p>
+                        </div>
+
+                        <div className="p-8 flex-1">
+                            {/* ACTIVE TAB: GENERAL */}
+                            {activeTab === 'general' && (
+                                <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-3 ml-1">
+                                                <Globe size={14} className="text-indigo-500" />
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nombre Público</label>
+                                            </div>
+                                            <input
+                                                type="text"
+                                                value={formData.storeName}
+                                                onChange={e => handleChange('storeName', e.target.value)}
+                                                className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-bold text-slate-700 shadow-inner"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-3 ml-1">
+                                                <User size={14} className="text-indigo-500" />
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Gerente Responsable</label>
+                                            </div>
+                                            <input
+                                                type="text"
+                                                value={formData.managerName}
+                                                onChange={e => handleChange('managerName', e.target.value)}
+                                                className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-medium text-slate-700 shadow-inner"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-3 ml-1">
+                                                <Phone size={14} className="text-indigo-500" />
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Teléfono</label>
+                                            </div>
+                                            <input
+                                                type="tel"
+                                                value={formData.phone || ''}
+                                                onChange={e => handleChange('phone', e.target.value)}
+                                                className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-medium text-slate-700 shadow-inner"
+                                            />
+                                        </div>
+
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-3 ml-1">
+                                                <Mail size={14} className="text-indigo-500" />
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Email Corporativo</label>
+                                            </div>
+                                            <input
+                                                type="email"
+                                                value={formData.contactEmail}
+                                                onChange={e => handleChange('contactEmail', e.target.value)}
+                                                className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-medium text-slate-700 shadow-inner"
+                                            />
+                                        </div>
+
+                                        <div className="md:col-span-2 mt-4 pt-8 border-t border-slate-50">
+                                            <div className="flex items-center gap-2 mb-6 ml-1">
+                                                <Map size={14} className="text-rose-500" />
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Geolocalización</label>
+                                            </div>
+                                            <div className="space-y-6">
+                                                <input
+                                                    type="text"
+                                                    placeholder="Dirección completa"
+                                                    value={formData.address || ''}
+                                                    onChange={e => handleChange('address', e.target.value)}
+                                                    className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-medium text-slate-700 shadow-inner"
+                                                />
+                                                <div className="grid grid-cols-2 gap-6">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Ciudad"
+                                                        value={formData.city || ''}
+                                                        onChange={e => handleChange('city', e.target.value)}
+                                                        className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-medium text-slate-700 shadow-inner"
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="CP"
+                                                        value={formData.zipCode || ''}
+                                                        onChange={e => handleChange('zipCode', e.target.value)}
+                                                        className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-medium text-slate-700 shadow-inner"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ACTIVE TAB: HOURS */}
+                            {activeTab === 'hours' && (
+                                <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500 max-w-2xl">
+                                    <div className="p-8 bg-amber-50/50 rounded-[2rem] border border-amber-100 shadow-sm">
+                                        <div className="flex items-center gap-3 mb-8">
+                                            <div className="w-12 h-12 bg-amber-500 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-amber-200">
+                                                <Clock size={24} />
+                                            </div>
+                                            <div>
+                                                <h4 className="font-black text-amber-900 text-xl tracking-tight">Turno de Mañana</h4>
+                                                <p className="text-amber-700/60 text-xs font-bold uppercase tracking-widest">Apertura estándar</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col sm:flex-row items-center gap-6">
+                                            <div className="w-full">
+                                                <label className="block text-[10px] font-black text-amber-700 uppercase mb-2 ml-1">Hora de entrada</label>
+                                                <input
+                                                    type="time"
+                                                    value={formData.openingHours.morningStart}
+                                                    onChange={(e) => handleTimeChange('morningStart', e.target.value)}
+                                                    className="w-full px-6 py-4 text-center bg-white border border-amber-200 text-amber-900 rounded-[1.25rem] font-bold text-xl focus:ring-8 focus:ring-amber-500/10 outline-none shadow-sm transition-all"
+                                                />
+                                            </div>
+                                            <div className="hidden sm:block text-amber-300">
+                                                <ChevronRight size={32} />
+                                            </div>
+                                            <div className="w-full">
+                                                <label className="block text-[10px] font-black text-amber-700 uppercase mb-2 ml-1">Cierre mañana</label>
+                                                <input
+                                                    type="time"
+                                                    value={formData.openingHours.morningEnd}
+                                                    onChange={(e) => handleTimeChange('morningEnd', e.target.value)}
+                                                    className="w-full px-6 py-4 text-center bg-white border border-amber-200 text-amber-900 rounded-[1.25rem] font-bold text-xl focus:ring-8 focus:ring-amber-500/10 outline-none shadow-sm transition-all"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-8 bg-indigo-50/50 rounded-[2rem] border border-indigo-100 shadow-sm">
+                                        <div className="flex items-center gap-3 mb-8">
+                                            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
+                                                <Clock size={24} />
+                                            </div>
+                                            <div>
+                                                <h4 className="font-black text-indigo-900 text-xl tracking-tight">Turno de Tarde</h4>
+                                                <p className="text-indigo-700/60 text-xs font-bold uppercase tracking-widest">Cierre estándar</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col sm:flex-row items-center gap-6">
+                                            <div className="w-full">
+                                                <label className="block text-[10px] font-black text-indigo-700 uppercase mb-2 ml-1">Apertura tarde</label>
+                                                <input
+                                                    type="time"
+                                                    value={formData.openingHours.afternoonStart}
+                                                    onChange={(e) => handleTimeChange('afternoonStart', e.target.value)}
+                                                    className="w-full px-6 py-4 text-center bg-white border border-indigo-200 text-indigo-900 rounded-[1.25rem] font-bold text-xl focus:ring-8 focus:ring-indigo-500/10 outline-none shadow-sm transition-all"
+                                                />
+                                            </div>
+                                            <div className="hidden sm:block text-indigo-200">
+                                                <ChevronRight size={32} />
+                                            </div>
+                                            <div className="w-full">
+                                                <label className="block text-[10px] font-black text-indigo-700 uppercase mb-2 ml-1">Hora de cierre</label>
+                                                <input
+                                                    type="time"
+                                                    value={formData.openingHours.afternoonEnd}
+                                                    onChange={(e) => handleTimeChange('afternoonEnd', e.target.value)}
+                                                    className="w-full px-6 py-4 text-center bg-white border border-indigo-200 text-indigo-900 rounded-[1.25rem] font-bold text-xl focus:ring-8 focus:ring-indigo-500/10 outline-none shadow-sm transition-all"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ACTIVE TAB: ROLES */}
+                            {activeTab === 'roles' && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        {renderRoleConfig('sales_register', 'Caja de Ventas', ShoppingCart, 'text-blue-600')}
+                                        {renderRoleConfig('purchase_register', 'Caja de Compras', Package, 'text-orange-600')}
+                                        {renderRoleConfig('shuttle', 'Lanzadera', Truck, 'text-purple-600')}
+                                        {renderRoleConfig('cleaning', 'Limpieza', Sparkles, 'text-emerald-600')}
+                                    </div>
+
+                                    {/* RI Config Especial */}
+                                    <div className="mt-8 p-8 bg-violet-50/30 rounded-[2.5rem] border border-violet-100 flex flex-col md:flex-row items-center justify-between gap-6">
+                                        <div className="flex items-center gap-5">
+                                            <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center text-violet-600 shadow-sm border border-violet-100">
+                                                <UserCheck size={32} />
+                                            </div>
+                                            <div>
+                                                <h4 className="font-black text-slate-800 text-lg">Reunión Individual (RI)</h4>
+                                                <p className="text-slate-500 text-xs font-medium">Configura la hora de entrada exclusiva para RIs</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-4 bg-white p-2 rounded-2xl shadow-sm border border-slate-100">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase ml-4">Entrada RI:</span>
+                                            <CustomTimePicker
+                                                className="!border-none !shadow-none !px-4 !py-3 font-black text-indigo-600 text-lg"
+                                                value={formData.individualMeetingStartTime || ''}
+                                                onChange={(val) => handleChange('individualMeetingStartTime', val)}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ACTIVE TAB: HOLIDAYS */}
+                            {activeTab === 'holidays' && (
+                                <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                                        <div className="space-y-6">
+                                            <div className="p-8 bg-slate-50 rounded-[2rem] border border-slate-100">
+                                                <h4 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
+                                                    <CalendarIcon size={18} className="text-rose-500" />
+                                                    Añadir Nuevo Festivo
+                                                </h4>
+
+                                                <div className="space-y-6">
+                                                    <div className="relative group">
+                                                        <DatePicker
+                                                            value={newHoliday}
+                                                            onChange={setNewHoliday}
+                                                            className="w-full !rounded-2xl !py-4 !px-6 border-slate-200"
+                                                            variant="light"
+                                                        />
+                                                    </div>
+
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {(['full', 'afternoon', 'closed_afternoon'] as const).map(type => (
+                                                            <button
+                                                                key={type}
+                                                                onClick={() => setNewHolidayType(type)}
+                                                                className={clsx(
+                                                                    "flex-1 px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border",
+                                                                    newHolidayType === type
+                                                                        ? "bg-rose-500 text-white border-rose-600 shadow-md"
+                                                                        : "bg-white text-slate-500 border-slate-100 hover:border-rose-200"
+                                                                )}
+                                                            >
+                                                                {type === 'full' ? 'Cerrado' : type === 'afternoon' ? 'Tarde Festiva' : 'Cierre Tarde'}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+
+                                                    <button
+                                                        onClick={addHoliday}
+                                                        disabled={!newHoliday}
+                                                        className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-black transition-all disabled:opacity-50"
+                                                    >
+                                                        <BadgeCheck size={18} />
+                                                        Registrar Festivo
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            <h4 className="font-bold text-slate-800 flex items-center gap-2 ml-2">
+                                                Próximos Cierres
+                                                <span className="bg-indigo-100 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black">{formData.holidays.length}</span>
+                                            </h4>
+
+                                            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                                                {formData.holidays.length === 0 ? (
+                                                    <div className="flex flex-col items-center justify-center py-20 bg-slate-50 rounded-[2rem] border border-dashed border-slate-200 text-slate-400">
+                                                        <CalendarIcon size={40} className="mb-4 opacity-20" />
+                                                        <p className="font-bold italic text-sm">No hay fechas configuradas</p>
+                                                    </div>
+                                                ) : (
+                                                    formData.holidays.map((h, idx) => {
+                                                        const dateObj = new Date(h.date);
+                                                        const isFull = h.type === 'full';
+                                                        const isAfternoon = h.type === 'afternoon';
+
+                                                        return (
+                                                            <div key={idx} className="group flex items-center justify-between p-5 bg-white border border-slate-100 rounded-3xl hover:border-rose-200 hover:shadow-xl hover:shadow-rose-100/30 transition-all duration-300">
+                                                                <div className="flex items-center gap-5">
+                                                                    <div className={clsx(
+                                                                        "w-12 h-12 rounded-2xl flex flex-col items-center justify-center text-white font-bold",
+                                                                        isFull ? "bg-rose-500" : isAfternoon ? "bg-amber-500" : "bg-indigo-500"
+                                                                    )}>
+                                                                        <span className="text-[9px] leading-none uppercase">{dateObj.toLocaleDateString('es-ES', { month: 'short' }).replace('.', '')}</span>
+                                                                        <span className="text-lg leading-none mt-0.5">{dateObj.getDate()}</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <h5 className="font-bold text-slate-800 capitalize leading-none">{dateObj.toLocaleDateString('es-ES', { weekday: 'long' })}</h5>
+                                                                        <span className={clsx(
+                                                                            "text-[10px] font-black uppercase tracking-widest mt-1 inline-block",
+                                                                            isFull ? "text-rose-600" : isAfternoon ? "text-amber-600" : "text-indigo-600"
+                                                                        )}>
+                                                                            {h.type === 'full' ? 'Cerrado' : h.type === 'afternoon' ? 'Tarde Festiva' : 'Cierre Tarde'}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                                <button
+                                                                    onClick={() => toggleHoliday(h.date)}
+                                                                    className="w-10 h-10 flex items-center justify-center rounded-2xl bg-slate-50 text-slate-300 hover:bg-rose-50 hover:text-rose-500 transition-all group-hover:scale-100 scale-90 opacity-0 group-hover:opacity-100 font-bold"
+                                                                >
+                                                                    &times;
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
     );
 };
 

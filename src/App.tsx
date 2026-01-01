@@ -10,6 +10,7 @@ import EmployeesPage from './pages/Employees';
 import SchedulePage from './pages/Schedule';
 import SettingsPage from './pages/Settings';
 import SupervisionPage from './pages/Supervision';
+import ManagerLivePage from './pages/ManagerLive';
 
 import SupervisorLivePage from './pages/SupervisorLive';
 import TasksPage from './pages/Tasks';
@@ -37,6 +38,7 @@ export default function App() {
                 </ProtectedRoute>
               }>
                 <Route index element={<DashboardPage />} />
+                <Route path="manager-live" element={<ManagerLivePage />} />
                 <Route path="employees" element={<EmployeesPage />} />
                 <Route path="schedule" element={<SchedulePage />} />
                 <Route path="supervision" element={<SupervisionPage />} />

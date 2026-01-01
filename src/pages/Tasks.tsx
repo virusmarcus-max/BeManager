@@ -379,7 +379,7 @@ export default function TasksPage() {
         })) : [{ id: '1', name: 'Sevilla 1' }, { id: '2', name: 'Sevilla 2' }]; // Fallback to avoid 0 division if data not loaded
 
         return (
-            <div className="p-8 pb-24 max-w-[1600px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <div className="px-4 py-8 pb-24 max-w-[1600px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
                 {/* Header */}
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end mb-10 gap-6">
                     <div>
@@ -616,7 +616,7 @@ export default function TasksPage() {
                                             )}
                                             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-white font-black text-[10px] uppercase tracking-[0.1em]">
                                                 <Calendar size={14} className="text-indigo-400" />
-                                                {task.date ? new Date(task.date).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : `Ciclo: ${task.durationDays || 1} días`}
+                                                {task.date ? new Date(task.date).toLocaleDateString('es-ES') : `Ciclo: ${task.durationDays || 1} días`}
                                             </div>
                                             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-white font-black text-[10px] uppercase tracking-[0.1em]">
                                                 <Store size={14} className="text-emerald-400" />

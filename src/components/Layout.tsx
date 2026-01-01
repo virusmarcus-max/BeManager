@@ -97,19 +97,19 @@ const Layout = () => {
 
     // Navigation Items Definition
     const managerNavItems = [
-        { to: '/', label: 'Inicio', icon: BarChart3 },
+        { to: '/', label: 'Dashboard', icon: BarChart3 },
+        { to: '/manager-live', label: 'En Vivo', icon: Radio },
         { to: '/schedule', label: 'Horarios', icon: Calendar },
         { to: '/employees', label: 'Empleados', icon: Users },
         { to: '/tasks', label: 'Tareas', icon: CheckSquare, isUrgent: hasUrgentTasks },
         { to: '/incentives', label: 'Incentivos', icon: Coins, isUrgent: hasPendingIncentives },
-        { to: '/settings', label: 'Configuración', icon: Settings },
     ];
 
     const supervisorNavItems = [
         { to: '/', label: 'Dashboard', icon: BarChart3 },
+        { to: '/live', label: 'En Vivo', icon: Radio },
         { to: '/approvals', label: 'Horarios', icon: CheckCircle, isUrgent: hasPendingApprovals },
         { to: '/tasks', label: 'Tareas', icon: CheckSquare, isUrgent: hasUrgentTasks },
-        { to: '/live', label: 'En Vivo', icon: Radio },
         { to: '/supervision/incentives', label: 'Incentivos', icon: Coins },
     ];
 
@@ -196,6 +196,21 @@ const Layout = () => {
                 </nav>
 
                 <div className={clsx("p-5 mt-auto border-t flex flex-col items-center gap-4", isDarkMode ? "border-slate-800" : "border-slate-100/50")}>
+                    <NavLink
+                        to="/settings"
+                        title={!sidebarOpen ? 'Configuración' : undefined}
+                        className={({ isActive }) => clsx(
+                            "relative flex items-center justify-center transition-all duration-300 group cursor-pointer",
+                            sidebarOpen ? "w-full px-5 py-3 rounded-2xl gap-3 justify-start" : "w-12 h-12 rounded-2xl",
+                            isActive
+                                ? (isDarkMode ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30" : "bg-slate-100 text-indigo-600 border border-slate-200")
+                                : (isDarkMode ? "text-slate-400 hover:text-indigo-300" : "text-slate-500 hover:text-indigo-600")
+                        )}
+                    >
+                        <Settings size={20} />
+                        {sidebarOpen && <span className="font-bold text-sm">Configuración</span>}
+                    </NavLink>
+
                     <button
                         onClick={logout}
                         title="Cerrar Sesión"

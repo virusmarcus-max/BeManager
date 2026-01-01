@@ -111,10 +111,15 @@ const IncentivesSupervisor = () => {
     const selectedReport = incentiveReports.find(r => r.id === selectedReportId);
 
     // Local state for inputs
+    // Local state for inputs
     const [localConfig, setLocalConfig] = useState({
         captacion: '',
         mecanizacion: '',
-        bonus: ''
+        bonus: '',
+        extraHour: '',
+        apply_bonus_responsible: false,
+        apply_bonus_manager: false,
+        apply_bonus_submanager: false
     });
 
     // Modal States
@@ -133,7 +138,11 @@ const IncentivesSupervisor = () => {
             setLocalConfig({
                 captacion: selectedReport.value_per_captacion?.toString() || '',
                 mecanizacion: selectedReport.value_per_mecanizacion?.toString() || '',
-                bonus: selectedReport.value_responsibility_bonus?.toString() || ''
+                bonus: selectedReport.value_responsibility_bonus?.toString() || '',
+                extraHour: selectedReport.value_per_extra_hour?.toString() || '',
+                apply_bonus_responsible: selectedReport.apply_bonus_responsible || false,
+                apply_bonus_manager: selectedReport.apply_bonus_manager || false,
+                apply_bonus_submanager: selectedReport.apply_bonus_submanager || false
             });
         }
     }, [selectedReportId]);
@@ -184,11 +193,15 @@ const IncentivesSupervisor = () => {
 
 
     // Helper Calculation Logic
-    const calculateItemTotal = (item: IncentiveItem, captacionVal: number, mecanizacionVal: number, bonusVal: number) => {
+    const calculateItemTotal = (item: IncentiveItem, captacionVal: number, mecanizacionVal: number, bonusVal: number, extraHourVal: number, config: { resp: boolean, man: boolean, sub: boolean }) => {
         const fullEmployee = employees.find(e => e.id === item.employeeId);
-        const isResponsible = fullEmployee
-            ? ['Responsable', 'Gerente', 'Subgerente'].includes(fullEmployee.category)
-            : false;
+        let isResponsible = false;
+
+        if (fullEmployee) {
+            if (fullEmployee.category === 'Responsable' && config.resp) isResponsible = true;
+            if (fullEmployee.category === 'Gerente' && config.man) isResponsible = true;
+            if (fullEmployee.category === 'Subgerente' && config.sub) isResponsible = true;
+        }
 
         // Prorated Responsibility Bonus
         // Rule: Bonus is for 40 hours. Prorate if less.
@@ -203,11 +216,12 @@ const IncentivesSupervisor = () => {
             (item.micros_mecanizacion_qty || 0) * mecanizacionVal;
 
         const respBonus = isResponsible ? adjustedBonusVal : 0;
+        const extraHoursTotal = (item.hours_payment_qty || 0) * extraHourVal;
 
         return {
             ...item,
             responsibility_bonus_amount: respBonus,
-            total: base + plus - deduc + micros + respBonus
+            total: base + plus - deduc + micros + respBonus + extraHoursTotal
         };
     };
 
@@ -266,11 +280,16 @@ const IncentivesSupervisor = () => {
             const valCaptacion = parseFloat(localConfig.captacion) || 0;
             const valMecanizacion = parseFloat(localConfig.mecanizacion) || 0;
             const valBonus = parseFloat(localConfig.bonus) || 0;
+            const valExtraHour = parseFloat(localConfig.extraHour) || 0;
 
             if (
                 valCaptacion === selectedReport.value_per_captacion &&
                 valMecanizacion === selectedReport.value_per_mecanizacion &&
-                valBonus === selectedReport.value_responsibility_bonus
+                valBonus === selectedReport.value_responsibility_bonus &&
+                valExtraHour === selectedReport.value_per_extra_hour &&
+                localConfig.apply_bonus_responsible === selectedReport.apply_bonus_responsible &&
+                localConfig.apply_bonus_manager === selectedReport.apply_bonus_manager &&
+                localConfig.apply_bonus_submanager === selectedReport.apply_bonus_submanager
             ) {
                 return;
             }
@@ -279,11 +298,19 @@ const IncentivesSupervisor = () => {
                 ...selectedReport,
                 value_per_captacion: valCaptacion,
                 value_per_mecanizacion: valMecanizacion,
-                value_responsibility_bonus: valBonus
+                value_responsibility_bonus: valBonus,
+                value_per_extra_hour: valExtraHour,
+                apply_bonus_responsible: localConfig.apply_bonus_responsible,
+                apply_bonus_manager: localConfig.apply_bonus_manager,
+                apply_bonus_submanager: localConfig.apply_bonus_submanager
             };
 
             const recalculatedItems = updatedReport.items.map(item =>
-                calculateItemTotal(item, valCaptacion, valMecanizacion, valBonus)
+                calculateItemTotal(item, valCaptacion, valMecanizacion, valBonus, valExtraHour, {
+                    resp: localConfig.apply_bonus_responsible,
+                    man: localConfig.apply_bonus_manager,
+                    sub: localConfig.apply_bonus_submanager
+                })
             );
 
             updateIncentiveReport({ ...updatedReport, items: recalculatedItems });
@@ -293,7 +320,7 @@ const IncentivesSupervisor = () => {
         return () => clearTimeout(timer);
     }, [localConfig, selectedReportId, employees]);
 
-    const handleLocalChange = (field: keyof typeof localConfig, val: string) => {
+    const handleLocalChange = (field: keyof typeof localConfig, val: any) => {
         setLocalConfig(prev => ({ ...prev, [field]: val }));
     };
 
@@ -310,6 +337,7 @@ const IncentivesSupervisor = () => {
             'Total Bonificaciones',
             'Total Deducciones',
             'Valor Micros',
+            'Horas Extra (Cant/Total)',
             'Plus Responsabilidad',
             'Total a Percibir'
         ];
@@ -318,8 +346,10 @@ const IncentivesSupervisor = () => {
         const rows = selectedReport.items.map(item => {
             const valCaptacion = parseFloat(localConfig.captacion) || 0;
             const valMecanizacion = parseFloat(localConfig.mecanizacion) || 0;
+            const valExtraHour = parseFloat(localConfig.extraHour) || 0;
 
             const microsVal = ((item.micros_aptacion_qty || 0) * valCaptacion + (item.micros_mecanizacion_qty || 0) * valMecanizacion);
+            const extraHourTotal = (item.hours_payment_qty || 0) * valExtraHour;
 
             // Clean strings for CSV (remove newlines, semicolons)
             const clean = (str: string) => str.replace(/;/g, ',').replace(/\n/g, ' ');
@@ -333,6 +363,7 @@ const IncentivesSupervisor = () => {
                 totalBonuses.toFixed(2).replace('.', ','),
                 totalDeductions.toFixed(2).replace('.', ','),
                 microsVal.toFixed(2).replace('.', ','),
+                `${item.hours_payment_qty || 0} (${extraHourTotal.toFixed(2).replace('.', ',')})`,
                 (item.responsibility_bonus_amount?.toFixed(2) || '0,00').replace('.', ','),
                 item.total.toFixed(2).replace('.', ',')
             ].join(';');
@@ -363,9 +394,14 @@ const IncentivesSupervisor = () => {
         const valCaptacion = parseFloat(localConfig.captacion) || 0;
         const valMecanizacion = parseFloat(localConfig.mecanizacion) || 0;
         const valBonus = parseFloat(localConfig.bonus) || 0;
+        const valExtraHour = parseFloat(localConfig.extraHour) || 0;
 
         // Recalculate this specific item
-        const recalculatedItem = calculateItemTotal(editingItem.item, valCaptacion, valMecanizacion, valBonus);
+        const recalculatedItem = calculateItemTotal(editingItem.item, valCaptacion, valMecanizacion, valBonus, valExtraHour, {
+            resp: localConfig.apply_bonus_responsible,
+            man: localConfig.apply_bonus_manager,
+            sub: localConfig.apply_bonus_submanager
+        });
 
         const updatedItems = selectedReport.items.map(i =>
             i.employeeId === editingItem.itemId ? recalculatedItem : i
@@ -610,55 +646,85 @@ const IncentivesSupervisor = () => {
                                 </div>
 
                                 {/* Configuration Banner (Supervisor Only) */}
-                                {selectedReport.status !== 'approved' && (
-                                    <div className="mb-8 p-6 bg-slate-950/50 border border-slate-800 rounded-3xl print:hidden relative z-10">
-                                        <div className="flex items-center gap-2 mb-4">
-                                            <Settings2 className="text-indigo-400" size={20} />
-                                            <h3 className="text-white font-bold">Configuración de Valores (Mes Actual)</h3>
+                                <div className="mb-8 p-6 bg-slate-950/50 border border-slate-800 rounded-3xl print:hidden relative z-10">
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <Settings2 className="text-indigo-400" size={20} />
+                                        <h3 className="text-white font-bold">Configuración de Valores (Mes Actual)</h3>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                                        <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 relative group focus-within:border-indigo-500 transition-colors">
+                                            <label className="text-[10px] text-slate-400 uppercase font-black tracking-wider block mb-2">Valor Captación</label>
+                                            <div className="flex items-center gap-2">
+                                                <DollarSign size={16} className="text-indigo-500" />
+                                                <input
+                                                    type="number"
+                                                    value={localConfig.captacion}
+                                                    onChange={e => handleLocalChange('captacion', e.target.value)}
+                                                    placeholder="0.00"
+                                                    className="bg-transparent text-white font-mono text-lg outline-none w-full"
+                                                />
+                                            </div>
                                         </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 relative group focus-within:border-indigo-500 transition-colors">
-                                                <label className="text-[10px] text-slate-400 uppercase font-black tracking-wider block mb-2">Valor Captación</label>
-                                                <div className="flex items-center gap-2">
-                                                    <DollarSign size={16} className="text-indigo-500" />
-                                                    <input
-                                                        type="number"
-                                                        value={localConfig.captacion}
-                                                        onChange={e => handleLocalChange('captacion', e.target.value)}
-                                                        placeholder="0.00"
-                                                        className="bg-transparent text-white font-mono text-lg outline-none w-full"
-                                                    />
-                                                </div>
+                                        <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 relative group focus-within:border-indigo-500 transition-colors">
+                                            <label className="text-[10px] text-slate-400 uppercase font-black tracking-wider block mb-2">Valor Mecanización</label>
+                                            <div className="flex items-center gap-2">
+                                                <DollarSign size={16} className="text-indigo-500" />
+                                                <input
+                                                    type="number"
+                                                    value={localConfig.mecanizacion}
+                                                    onChange={e => handleLocalChange('mecanizacion', e.target.value)}
+                                                    placeholder="0.00"
+                                                    className="bg-transparent text-white font-mono text-lg outline-none w-full"
+                                                />
                                             </div>
-                                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 relative group focus-within:border-indigo-500 transition-colors">
-                                                <label className="text-[10px] text-slate-400 uppercase font-black tracking-wider block mb-2">Valor Mecanización</label>
-                                                <div className="flex items-center gap-2">
-                                                    <DollarSign size={16} className="text-indigo-500" />
-                                                    <input
-                                                        type="number"
-                                                        value={localConfig.mecanizacion}
-                                                        onChange={e => handleLocalChange('mecanizacion', e.target.value)}
-                                                        placeholder="0.00"
-                                                        className="bg-transparent text-white font-mono text-lg outline-none w-full"
-                                                    />
-                                                </div>
+                                        </div>
+                                        <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 relative group focus-within:border-violet-500 transition-colors">
+                                            <label className="text-[10px] text-violet-400 uppercase font-black tracking-wider block mb-2">Valor Hora Extra</label>
+                                            <div className="flex items-center gap-2">
+                                                <DollarSign size={16} className="text-violet-500" />
+                                                <input
+                                                    type="number"
+                                                    value={localConfig.extraHour}
+                                                    onChange={e => handleLocalChange('extraHour', e.target.value)}
+                                                    placeholder="0.00"
+                                                    className="bg-transparent text-white font-mono text-lg outline-none w-full"
+                                                />
                                             </div>
-                                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 relative group focus-within:border-emerald-500 transition-colors">
-                                                <label className="text-[10px] text-emerald-400 uppercase font-black tracking-wider block mb-2">Plus Resp. (40h Base)</label>
-                                                <div className="flex items-center gap-2">
-                                                    <DollarSign size={16} className="text-emerald-500" />
-                                                    <input
-                                                        type="number"
-                                                        value={localConfig.bonus}
-                                                        onChange={e => handleLocalChange('bonus', e.target.value)}
-                                                        placeholder="0.00"
-                                                        className="bg-transparent text-white font-mono text-lg outline-none w-full"
-                                                    />
-                                                </div>
+                                        </div>
+                                        <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 relative group focus-within:border-emerald-500 transition-colors">
+                                            <label className="text-[10px] text-emerald-400 uppercase font-black tracking-wider block mb-2">Plus Resp. (40h)</label>
+                                            <div className="flex items-center gap-2 mb-3">
+                                                <DollarSign size={16} className="text-emerald-500" />
+                                                <input
+                                                    type="number"
+                                                    value={localConfig.bonus}
+                                                    onChange={e => handleLocalChange('bonus', e.target.value)}
+                                                    placeholder="0.00"
+                                                    className="bg-transparent text-white font-mono text-lg outline-none w-full"
+                                                />
+                                            </div>
+                                            <div className="flex gap-1">
+                                                {[
+                                                    { id: 'apply_bonus_responsible', label: 'Resp' },
+                                                    { id: 'apply_bonus_manager', label: 'Ger' },
+                                                    { id: 'apply_bonus_submanager', label: 'SubG' }
+                                                ].map(opt => (
+                                                    <button
+                                                        key={opt.id}
+                                                        onClick={() => handleLocalChange(opt.id as any, !localConfig[opt.id as keyof typeof localConfig])}
+                                                        className={clsx("flex-1 py-1 rounded-md text-[10px] font-bold uppercase transition-all",
+                                                            localConfig[opt.id as keyof typeof localConfig]
+                                                                ? "bg-emerald-500 text-slate-900"
+                                                                : "bg-slate-800 text-slate-500 hover:bg-slate-700"
+                                                        )}
+                                                    >
+                                                        {opt.label}
+                                                    </button>
+                                                ))}
                                             </div>
                                         </div>
                                     </div>
-                                )}
+                                </div>
 
                                 {/* Employee Table */}
                                 <div className="overflow-x-auto relative z-0">
@@ -669,6 +735,7 @@ const IncentivesSupervisor = () => {
                                                 <th className="p-4 font-bold text-center">Incentivo<br />Base</th>
                                                 <th className="p-4 font-bold text-center">Ajustes<br />Extra</th>
                                                 <th className="p-4 font-bold text-center bg-slate-800/30 rounded-t-xl">Microprestamos<br /><span className="text-[9px] opacity-70">(Cap / Meca)</span></th>
+                                                <th className="p-4 font-bold text-center">Horas<br />Extra</th>
                                                 <th className="p-4 font-bold text-center">Plus<br />Resp.</th>
                                                 <th className="p-4 font-bold text-right text-emerald-400">Total</th>
                                             </tr>
@@ -677,8 +744,10 @@ const IncentivesSupervisor = () => {
                                             {selectedReport.items.map(item => {
                                                 const valCaptacion = parseFloat(localConfig.captacion) || 0;
                                                 const valMecanizacion = parseFloat(localConfig.mecanizacion) || 0;
+                                                const valExtraHour = parseFloat(localConfig.extraHour) || 0;
                                                 const microsTotal = ((item.micros_aptacion_qty || 0) * valCaptacion) +
                                                     ((item.micros_mecanizacion_qty || 0) * valMecanizacion);
+                                                const hoursTotal = (item.hours_payment_qty || 0) * valExtraHour;
 
                                                 return (
                                                     <tr key={item.employeeId} className="group hover:bg-slate-800/30 transition-colors print:hover:bg-transparent text-sm">
@@ -691,10 +760,10 @@ const IncentivesSupervisor = () => {
                                                         <td className="p-4 text-center relative group/edit">
                                                             <div className="space-y-0.5">
                                                                 {item.pluses.map(adj => (
-                                                                    <div key={adj.id} className="text-[10px] text-emerald-400 print:text-black">+ {adj.amount}€</div>
+                                                                    <div key={adj.id} title={adj.description} className="text-[10px] text-emerald-400 print:text-black">+ {adj.amount}€</div>
                                                                 ))}
                                                                 {item.deductions.map(adj => (
-                                                                    <div key={adj.id} className="text-[10px] text-red-400 print:text-black">- {adj.amount}€</div>
+                                                                    <div key={adj.id} title={adj.description} className="text-[10px] text-red-400 print:text-black">- {adj.amount}€</div>
                                                                 ))}
                                                                 {item.pluses.length === 0 && item.deductions.length === 0 && <span className="text-slate-600 text-[10px]">-</span>}
                                                             </div>
@@ -715,6 +784,16 @@ const IncentivesSupervisor = () => {
                                                                 </div>
                                                                 <div className="text-[10px] font-bold text-slate-500">
                                                                     {microsTotal > 0 ? `${microsTotal.toFixed(2)}€` : '-'}
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-4 text-center">
+                                                            <div className="flex flex-col items-center">
+                                                                <div className="text-xs font-mono text-violet-300 mb-1">
+                                                                    {item.hours_payment_qty || 0}h
+                                                                </div>
+                                                                <div className="text-[10px] font-bold text-slate-500">
+                                                                    {hoursTotal > 0 ? `${hoursTotal.toFixed(2)}€` : '-'}
                                                                 </div>
                                                             </div>
                                                         </td>

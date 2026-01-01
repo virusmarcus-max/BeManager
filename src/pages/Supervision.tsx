@@ -207,7 +207,7 @@ const SupervisionPage: React.FC = () => {
     };
 
     return (
-        <div className="p-8 pb-24 max-w-[1600px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 relative">
+        <div className="px-4 py-8 pb-24 max-w-[1600px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 relative">
             {/* Background Glow */}
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] bg-indigo-500/5 rounded-full blur-[120px] pointer-events-none"></div>
 
@@ -262,7 +262,7 @@ const SupervisionPage: React.FC = () => {
                                                 Solicitud Modificación
                                             </h3>
                                             <p className={clsx("text-xs font-medium truncate", selectedScheduleId === req.id ? "text-blue-100" : "text-slate-500")}>
-                                                {new Date(req.weekStartDate).toLocaleDateString()}
+                                                {new Date(req.weekStartDate).toLocaleDateString('es-ES')}
                                             </p>
                                         </div>
                                     </button>
@@ -358,7 +358,7 @@ const SupervisionPage: React.FC = () => {
                                                 {getStoreName(sched.establishmentId)}
                                             </p>
                                             <p className="text-[10px] text-slate-500 font-medium truncate">
-                                                Semana {new Date(sched.weekStartDate).toLocaleDateString()}
+                                                Semana {new Date(sched.weekStartDate).toLocaleDateString('es-ES')}
                                             </p>
                                         </div>
                                         <ChevronRight size={14} className="text-slate-600 group-hover:text-slate-400 shrink-0" />
@@ -375,7 +375,7 @@ const SupervisionPage: React.FC = () => {
                     {/* Main Content Area */}
                     <div className="flex-1 w-full bg-slate-900/40 border border-slate-800/50 rounded-[3rem] overflow-hidden backdrop-blur-sm h-[85vh] flex flex-col">
                         {selectedSchedule ? (
-                            <div className="flex-1 h-full overflow-y-auto custom-scrollbar p-10">
+                            <div className="flex-1 h-full overflow-y-auto custom-scrollbar px-4 py-8 lg:p-10">
 
                                 {/* Detail Header */}
                                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end mb-10 gap-8 relative">
@@ -451,7 +451,7 @@ const SupervisionPage: React.FC = () => {
                                 </div>
 
                                 {/* Schedule Grid Preview (Inline) */}
-                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-8 overflow-hidden">
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-4 lg:p-8 overflow-hidden">
                                     {/* Coverage Banner */}
                                     {stats && (
                                         <div className="mb-8 p-6 bg-slate-900 border border-slate-700 rounded-3xl shadow-lg relative overflow-hidden">
@@ -579,23 +579,23 @@ const SupervisionPage: React.FC = () => {
                                         );
                                     })()}
 
-                                    <div className="overflow-x-auto custom-scrollbar pb-4">
-                                        <table className="w-full border-collapse min-w-[1000px]">
+                                    <div className="overflow-x-auto lg:overflow-x-visible custom-scrollbar pb-4">
+                                        <table className="w-full border-collapse">
                                             <thead>
                                                 <tr>
-                                                    <th className="sticky left-0 z-20 bg-slate-900 p-4 text-left text-xs font-black uppercase text-slate-500 border-b border-r border-slate-800 min-w-[200px]">Empleado</th>
+                                                    <th className="sticky left-0 z-20 bg-slate-900 p-3 text-left text-[10px] font-black uppercase text-slate-500 border-b border-r border-slate-800 min-w-[120px]">Empleado</th>
                                                     {Array.from({ length: 7 }).map((_, i) => {
                                                         const d = new Date(selectedSchedule.weekStartDate);
                                                         d.setDate(d.getDate() + i);
                                                         return (
-                                                            <th key={i} className="p-4 bg-slate-900/50 text-center border-b border-slate-800 min-w-[120px]">
-                                                                <span className="block text-[10px] font-black uppercase text-slate-500 mb-1">{d.toLocaleDateString('es-ES', { weekday: 'short' })}</span>
-                                                                <span className="text-lg font-bold text-slate-200">{d.getDate()}</span>
+                                                            <th key={i} className="p-2 lg:p-3 bg-slate-900/50 text-center border-b border-slate-800 min-w-[70px]">
+                                                                <span className="block text-[9px] font-black uppercase text-slate-500 mb-0.5">{d.toLocaleDateString('es-ES', { weekday: 'short' })}</span>
+                                                                <span className="text-base font-bold text-slate-200">{d.getDate()}</span>
                                                             </th>
                                                         );
                                                     })}
-                                                    <th className="p-4 bg-indigo-950/30 text-center border-b border-slate-800 min-w-[100px]">
-                                                        <span className="block text-[10px] font-black uppercase text-indigo-400 mb-1">Balance</span>
+                                                    <th className="p-2 lg:p-3 bg-indigo-950/30 text-center border-b border-slate-800 min-w-[70px]">
+                                                        <span className="block text-[9px] font-black uppercase text-indigo-400 mb-0.5">Balance</span>
                                                     </th>
                                                 </tr>
                                             </thead>

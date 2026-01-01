@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { Calendar, ChevronLeft, ChevronRight, User, X, CheckCircle, Settings, Loader2, Printer, Search, AlertTriangle, TrendingDown, Clock, ArrowRight, ShieldAlert, Activity, Plane, Sun, Moon, Trash2, FileSpreadsheet, TrendingUp, Info, Send } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, User, X, CheckCircle, Settings, Loader2, Printer, Search, AlertTriangle, TrendingDown, Clock, ArrowRight, ShieldAlert, Activity, Plane, Sun, Moon, Trash2, FileSpreadsheet, TrendingUp, Info, Send, RotateCw, RefreshCw, Sunrise } from 'lucide-react';
 import clsx from 'clsx';
 import type { Shift, ShiftType, TimeOffType, PermanentRequest, WorkRole, StoreSettings, TimeOffRequest } from '../types';
 import StoreConfigModal from '../components/StoreConfigModal';
@@ -96,6 +96,43 @@ const Schedule = () => {
     const [pendingStrictWarnings, setPendingStrictWarnings] = useState<string[]>([]);
     const [showLowHoursDialog, setShowLowHoursDialog] = useState(false);
     const [dialogMode, setDialogMode] = useState<'warning' | 'publish'>('warning');
+
+    // Custom Employee Selector State
+    const [isEmployeeSelectorOpen, setIsEmployeeSelectorOpen] = useState(false);
+    const [employeeSearchTerm, setEmployeeSearchTerm] = useState('');
+    const employeeSelectorRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (employeeSelectorRef.current && !employeeSelectorRef.current.contains(event.target as Node)) {
+                setIsEmployeeSelectorOpen(false);
+            }
+        };
+        if (isEmployeeSelectorOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isEmployeeSelectorOpen]);
+
+    // Custom Restriction Selector State
+    const [isRestrictionTypeSelectorOpen, setIsRestrictionTypeSelectorOpen] = useState(false);
+    const restrictionSelectorRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (restrictionSelectorRef.current && !restrictionSelectorRef.current.contains(event.target as Node)) {
+                setIsRestrictionTypeSelectorOpen(false);
+            }
+        };
+        if (isRestrictionTypeSelectorOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isRestrictionTypeSelectorOpen]);
 
     // Availability Request State
     const [selectedEmployeeForRequest, setSelectedEmployeeForRequest] = useState<string>('');
@@ -1515,7 +1552,7 @@ const Schedule = () => {
                                         <div className="text-xs text-slate-500 font-medium">Semanal</div>
                                         <div className="text-lg font-bold text-slate-800">{targetHours}h</div>
                                         <div className={`text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm border ${color.replace('text-', 'bg-').replace('-600', '-100')} ${color} border-${color.split('-')[1]}-200 whitespace-nowrap`}>
-                                            {isFullAbsence ? (nonOffShifts.some(s => s.type === 'sick_leave') ? 'Baja' : nonOffShifts.some(s => s.type === 'maternity_paternity') ? 'Paternidad' : 'Vacaciones') : `${workedHours.toFixed(1)}h / ${targetHours}h`}
+                                            {isFullAbsence ? (nonOffShifts.some(s => s.type === 'sick_leave') ? 'Baja Médica' : nonOffShifts.some(s => s.type === 'maternity_paternity') ? 'Mat/Pat' : 'Vacaciones') : `${workedHours.toFixed(1)}h / ${targetHours}h`}
                                         </div>
                                     </div>
                                 );
@@ -1745,8 +1782,8 @@ const Schedule = () => {
             {
                 isAvailabilityModalOpen && (
                     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[70] backdrop-blur-sm">
-                        <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 flex justify-between items-center shrink-0">
+                        <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar relative">
+                            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 flex justify-between items-center shrink-0 sticky top-0 z-[80] rounded-t-2xl">
                                 <div>
                                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                         <Calendar size={24} />
@@ -1761,189 +1798,142 @@ const Schedule = () => {
                                 </button>
                             </div>
 
-                            <div className="p-0 overflow-y-auto flex-1 bg-slate-50">
+                            <div className="p-0 flex-1 bg-slate-50">
                                 <div className="p-6 space-y-8">
                                     {/* Section 1: Absences & Requests */}
                                     {/* Section 1: Absences & Requests */}
-                                    <section>
-                                        <h3 className="flex items-center gap-2 text-sm font-bold text-teal-600 uppercase tracking-wider mb-4 border-b border-teal-100 pb-2">
-                                            <Plane size={16} /> Vacaciones
-                                        </h3>
-                                        <div className="space-y-2">
-                                            {(() => {
-                                                const relevantRequests = timeOffRequests
-                                                    .filter(r => storeEmployees.some(e => e.id === r.employeeId))
-                                                    .filter(r => r.type === 'vacation')
-                                                    .filter(r => {
-                                                        // Check direct dates
-                                                        if (r.dates && r.dates.some(d => weekDates.includes(d))) return true;
-                                                        // Check ranges (for long sick leaves)
-                                                        if (r.startDate && r.endDate) {
-                                                            const start = new Date(r.startDate);
-                                                            const end = new Date(r.endDate);
-                                                            const weekStart = new Date(weekDates[0]);
-                                                            const weekEnd = new Date(weekDates[6]);
-                                                            // Check overlap
-                                                            return start <= weekEnd && end >= weekStart;
+                                    {/* Section 1: Modern Status Dashboard */}
+                                    <div className="space-y-6">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            {/* Column: Out of Office (Sick & Vacation) */}
+                                            <div className="space-y-4">
+                                                <h3 className="flex items-center gap-2 text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
+                                                    <ShieldAlert size={14} className="text-orange-500" /> Personal No Disponible
+                                                </h3>
+                                                <div className="space-y-2">
+                                                    {(() => {
+                                                        const outOfOffice = timeOffRequests
+                                                            .filter(r => storeEmployees.some(e => e.id === r.employeeId))
+                                                            .filter(r => r.type === 'vacation' || r.type === 'sick_leave' || r.type === 'maternity_paternity')
+                                                            .filter(r => {
+                                                                if (r.dates && r.dates.some(d => weekDates.includes(d))) return true;
+                                                                if (r.startDate && r.endDate) {
+                                                                    return r.startDate <= weekDates[6] && r.endDate >= weekDates[0];
+                                                                }
+                                                                return false;
+                                                            })
+                                                            .sort((a, b) => (a.startDate || a.dates?.[0] || '').localeCompare(b.startDate || b.dates?.[0] || ''));
+
+                                                        if (outOfOffice.length === 0) {
+                                                            return <div className="p-4 bg-white rounded-2xl border border-dashed border-slate-200 text-xs text-slate-400 italic text-center">Todo el equipo disponible</div>;
                                                         }
-                                                        return false;
-                                                    })
-                                                    .sort((a, b) => (a.dates?.[0] || a.startDate || '').localeCompare(b.dates?.[0] || b.startDate || ''));
 
-                                                if (relevantRequests.length === 0) {
-                                                    return <div className="text-sm text-slate-400 italic text-center py-4 bg-white rounded-xl border border-dashed border-slate-200">No hay vacaciones programadas para esta semana.</div>;
-                                                }
+                                                        return outOfOffice.map(req => {
+                                                            const emp = employees.find(e => e.id === req.employeeId);
+                                                            const isVacation = req.type === 'vacation';
 
-                                                return relevantRequests.map(req => {
-                                                    const emp = employees.find(e => e.id === req.employeeId);
-                                                    const typeLabels: Record<string, { label: string, color: string, icon: any }> = {
-                                                        'sick_leave': { label: 'Baja Médica', color: 'bg-red-50 text-red-700 border-red-100', icon: Activity },
-                                                        'vacation': { label: 'Vacaciones', color: 'bg-teal-50 text-teal-700 border-teal-100', icon: Plane },
-                                                        'day_off': { label: 'Día Libre', color: 'bg-slate-100 text-slate-700 border-slate-200', icon: Calendar },
-                                                        'morning_off': { label: 'Mañana Libre', color: 'bg-orange-50 text-orange-700 border-orange-100', icon: Sun },
-                                                        'afternoon_off': { label: 'Tarde Libre', color: 'bg-purple-50 text-purple-700 border-purple-100', icon: Moon },
-                                                        'early_morning_shift': { label: 'Entrada 9:00', color: 'bg-amber-50 text-amber-700 border-amber-100', icon: Clock },
-                                                    };
-                                                    const config = typeLabels[req.type] || typeLabels['day_off'];
-                                                    const Icon = config.icon || Calendar;
+                                                            let statusText = '';
+                                                            if (req.startDate && req.endDate) {
+                                                                const start = new Date(req.startDate);
+                                                                const end = new Date(req.endDate);
+                                                                if (start <= new Date(weekDates[0]) && end >= new Date(weekDates[6])) statusText = 'Semana Completa';
+                                                                else statusText = `${new Date(req.startDate).getDate()}/${new Date(req.startDate).getMonth() + 1} - ${new Date(req.endDate).getDate()}/${new Date(req.endDate).getMonth() + 1}`;
+                                                            } else {
+                                                                const matching = req.dates.filter(d => weekDates.includes(d));
+                                                                if (matching.length === 7) statusText = 'Semana Completa';
+                                                                else statusText = matching.length === 1 ? matching[0].split('-')[2] : `${matching.length} días`;
+                                                            }
 
-                                                    // Determine text to show
-                                                    let dateText = '';
-                                                    if (req.startDate && req.endDate) {
-                                                        // It's a range/long term
-                                                        // Check if it covers the whole week
-                                                        const start = new Date(req.startDate);
-                                                        const end = new Date(req.endDate);
-                                                        const weekStart = new Date(weekDates[0]);
-                                                        const weekEnd = new Date(weekDates[6]);
+                                                            return (
+                                                                <div key={req.id} className={clsx(
+                                                                    "flex items-center justify-between p-3 rounded-2xl border shadow-sm transition-all",
+                                                                    isVacation ? "bg-emerald-50/50 border-emerald-100" : "bg-red-50/50 border-red-100"
+                                                                )}>
+                                                                    <div className="flex items-center gap-3">
+                                                                        <div className={clsx(
+                                                                            "h-8 w-8 rounded-xl flex items-center justify-center shrink-0",
+                                                                            isVacation ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"
+                                                                        )}>
+                                                                            {isVacation ? <Plane size={14} /> : <Activity size={14} />}
+                                                                        </div>
+                                                                        <div>
+                                                                            <div className="text-[11px] font-black text-slate-900 leading-none mb-1">
+                                                                                {emp?.name.split(' ')[0]} {emp?.name.split(' ')[1] || ''}
+                                                                            </div>
+                                                                            <div className={clsx("text-[9px] font-black uppercase tracking-tighter", isVacation ? "text-emerald-600" : "text-red-600")}>
+                                                                                {req.type === 'vacation' ? 'Vacaciones' : (req.type === 'maternity_paternity' ? 'Maternidad' : 'Baja Médica')}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className={clsx("text-[10px] font-bold px-2 py-1 rounded-lg", isVacation ? "bg-emerald-100/50 text-emerald-700" : "bg-red-100/50 text-red-700")}>
+                                                                        {statusText}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        });
+                                                    })()}
+                                                </div>
+                                            </div>
 
-                                                        if (start <= weekStart && end >= weekEnd) {
-                                                            dateText = 'Semana Completa';
-                                                        } else {
-                                                            // Partial overlap, show dates
-                                                            const visibleDates = weekDates.filter(d => {
-                                                                const current = new Date(d);
-                                                                return current >= start && current <= end;
-                                                            });
-                                                            dateText = visibleDates.map(d => {
-                                                                const [, m, day] = d.split('-');
-                                                                return `${day}/${m}`;
-                                                            }).join(', ');
+                                            {/* Column: Permanent Restrictions */}
+                                            <div className="space-y-4">
+                                                <h3 className="flex items-center gap-2 text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
+                                                    <Settings size={14} className="text-purple-500" /> Restricciones de Equipo
+                                                </h3>
+                                                <div className="space-y-2">
+                                                    {(() => {
+                                                        const activePerms = permanentRequests.filter(r => storeEmployees.some(e => e.id === r.employeeId));
+
+                                                        if (activePerms.length === 0) {
+                                                            return <div className="p-4 bg-white rounded-2xl border border-dashed border-slate-200 text-xs text-slate-400 italic text-center">Sin restricciones fijas</div>;
                                                         }
-                                                    } else {
-                                                        // List of dates
-                                                        const matchingDates = req.dates.filter(d => weekDates.includes(d));
-                                                        if (matchingDates.length === 7) {
-                                                            dateText = 'Semana Completa';
-                                                        } else {
-                                                            dateText = matchingDates.map(d => {
-                                                                const [, m, day] = d.split('-');
-                                                                return `${day}/${m}`;
-                                                            }).join(', ');
-                                                        }
-                                                    }
 
-                                                    return (
-                                                        <div key={req.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-center justify-between">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${config.color}`}>
-                                                                    <Icon size={18} />
+                                                        return activePerms.map(perm => {
+                                                            const emp = employees.find(e => e.id === perm.employeeId);
+                                                            const getLabel = () => {
+                                                                switch (perm.type) {
+                                                                    case 'morning_only': return 'Solo Mañanas';
+                                                                    case 'afternoon_only': return 'Solo Tardes';
+                                                                    case 'force_full_days': return 'Jornadas Completas';
+                                                                    case 'early_morning_shift': return 'Entrada 9:00';
+                                                                    case 'specific_days_off': return `Libres: ${perm.days?.length} días`;
+                                                                    case 'max_afternoons_per_week': return `Máx ${perm.value} Tardes`;
+                                                                    case 'rotating_days_off': return 'Días Rotativos';
+                                                                    case 'fixed_rotating_shift': return 'Rotativo Fijo';
+                                                                    default: return perm.type;
+                                                                }
+                                                            };
+
+                                                            const isException = perm.exceptions?.includes(currentWeekStart);
+
+                                                            return (
+                                                                <div key={perm.id} className={clsx(
+                                                                    "flex items-center justify-between p-3 rounded-2xl border shadow-sm transition-all",
+                                                                    isException ? "bg-slate-50 border-slate-100 opacity-60" : "bg-purple-50/50 border-purple-100"
+                                                                )}>
+                                                                    <div className="flex items-center gap-3">
+                                                                        <div className={clsx(
+                                                                            "h-8 w-8 rounded-xl flex items-center justify-center shrink-0",
+                                                                            isException ? "bg-slate-100 text-slate-400" : "bg-purple-100 text-purple-600"
+                                                                        )}>
+                                                                            <Settings size={14} />
+                                                                        </div>
+                                                                        <div>
+                                                                            <div className="text-[11px] font-black text-slate-900 leading-none mb-1">{emp?.name.split(' ')[0]} {emp?.name.split(' ')[1]}</div>
+                                                                            <div className={clsx("text-[9px] font-black uppercase tracking-tighter", isException ? "text-slate-400" : "text-purple-600")}>
+                                                                                {getLabel()}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                    {isException && <div className="text-[8px] font-bold text-red-500 uppercase">OFF</div>}
                                                                 </div>
-                                                                <div>
-                                                                    <div className="font-bold text-slate-800 text-sm">{emp?.name}</div>
-                                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${config.color.replace('border-', 'border ')}`}>
-                                                                        {config.label}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                            <div className="text-right">
-                                                                <div className="text-xs text-slate-500 font-medium max-w-[150px] truncate text-right">
-                                                                    {dateText}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                });
-                                            })()}
+                                                            );
+                                                        });
+                                                    })()}
+                                                </div>
+                                            </div>
                                         </div>
-                                    </section>
-
-                                    {/* Section 2: Bajas Médicas & Maternidad */}
-                                    <section>
-                                        <h3 className="flex items-center gap-2 text-sm font-bold text-red-600 uppercase tracking-wider mb-4 border-b border-red-100 pb-2">
-                                            <Activity size={16} /> Bajas y Maternidad
-                                        </h3>
-                                        <div className="space-y-2">
-                                            {(() => {
-                                                const sickLeaves = timeOffRequests
-                                                    .filter(r => storeEmployees.some(e => e.id === r.employeeId))
-                                                    .filter(r => r.type === 'sick_leave' || r.type === 'maternity_paternity')
-                                                    .filter(r => {
-                                                        if (r.dates && r.dates.some(d => weekDates.includes(d))) return true;
-                                                        if (r.startDate && r.endDate) {
-                                                            return r.startDate <= weekDates[6] && r.endDate >= weekDates[0];
-                                                        }
-                                                        return false;
-                                                    })
-                                                    .sort((a, b) => (a.dates?.[0] || a.startDate || '').localeCompare(b.dates?.[0] || b.startDate || ''));
-
-                                                if (sickLeaves.length === 0) {
-                                                    return <div className="text-xs text-slate-400 italic py-2">No hay bajas ni permisos de maternidad activos.</div>;
-                                                }
-
-                                                return sickLeaves.map(req => {
-                                                    const emp = employees.find(e => e.id === req.employeeId);
-                                                    const isMater = req.type === 'maternity_paternity';
-
-                                                    let dateText = '';
-                                                    if (req.startDate && req.endDate) {
-                                                        const start = new Date(req.startDate);
-                                                        const end = new Date(req.endDate);
-                                                        const weekStart = new Date(weekDates[0]);
-                                                        const weekEnd = new Date(weekDates[6]);
-
-                                                        if (start <= weekStart && end >= weekEnd) {
-                                                            dateText = 'Semana Completa';
-                                                        } else {
-                                                            const visibleDates = weekDates.filter(d => {
-                                                                const current = new Date(d);
-                                                                return current >= start && current <= end;
-                                                            });
-                                                            dateText = visibleDates.map(d => {
-                                                                const [, m, day] = d.split('-');
-                                                                return `${day}/${m}`;
-                                                            }).join(', ');
-                                                        }
-                                                    } else {
-                                                        const matchingDates = req.dates.filter(d => weekDates.includes(d));
-                                                        if (matchingDates.length === 7) {
-                                                            dateText = 'Semana Completa';
-                                                        } else {
-                                                            dateText = matchingDates.map(d => {
-                                                                const [, m, day] = d.split('-');
-                                                                return `${day}/${m}`;
-                                                            }).join(', ');
-                                                        }
-                                                    }
-
-                                                    return (
-                                                        <div key={req.id} className={`${isMater ? 'bg-pink-50/50 border-pink-100' : 'bg-red-50/50 border-red-100'} p-3 rounded-xl border shadow-sm flex items-center justify-between`}>
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${isMater ? 'bg-pink-100 text-pink-700' : 'bg-red-100 text-red-700'}`}>
-                                                                    <Activity size={14} />
-                                                                </div>
-                                                                <div className="font-bold text-slate-800 text-sm">{emp?.name}</div>
-                                                                {isMater && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 border border-pink-200">Maternidad</span>}
-                                                            </div>
-                                                            <div className={`text-right text-xs ${isMater ? 'text-pink-700' : 'text-red-700'} font-medium`}>
-                                                                {dateText}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                });
-                                            })()}
-                                        </div>
-                                    </section>
+                                    </div>
 
                                     {/* Section 3: Solicitudes de Disponibilidad (Days Off) */}
                                     <section>
@@ -1956,17 +1946,89 @@ const Schedule = () => {
                                                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Añadir Nueva Solicitud</h4>
                                                 <div className="space-y-3">
                                                     <div>
-                                                        <label className="block text-xs font-medium text-slate-700 mb-1">Empleado</label>
-                                                        <select
-                                                            value={selectedEmployeeForRequest}
-                                                            onChange={(e) => setSelectedEmployeeForRequest(e.target.value)}
-                                                            className="w-full text-sm rounded-lg border-slate-200 focus:border-indigo-500 focus:ring-indigo-500"
-                                                        >
-                                                            <option value="">Seleccionar empleado...</option>
-                                                            {storeEmployees.map(emp => (
-                                                                <option key={emp.id} value={emp.id}>{emp.name}</option>
-                                                            ))}
-                                                        </select>
+                                                        <label className="premium-label-light">Empleado</label>
+                                                        <div className="relative" ref={employeeSelectorRef}>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setIsEmployeeSelectorOpen(!isEmployeeSelectorOpen)}
+                                                                className="w-full premium-select-light text-left flex items-center gap-3"
+                                                            >
+                                                                {selectedEmployeeForRequest ? (
+                                                                    <>
+                                                                        <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-600">
+                                                                            {employees.find(e => e.id === selectedEmployeeForRequest)?.initials || '??'}
+                                                                        </div>
+                                                                        <span className="truncate">{employees.find(e => e.id === selectedEmployeeForRequest)?.name}</span>
+                                                                    </>
+                                                                ) : (
+                                                                    <span className="text-slate-400">Seleccionar empleado...</span>
+                                                                )}
+                                                            </button>
+
+                                                            {isEmployeeSelectorOpen && (
+                                                                <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-xl border border-slate-100 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                                                    <div className="p-2 border-b border-slate-50 bg-slate-50/50">
+                                                                        <div className="relative">
+                                                                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                                            <input
+                                                                                autoFocus
+                                                                                type="text"
+                                                                                placeholder="Buscar empleado..."
+                                                                                className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all font-medium"
+                                                                                value={employeeSearchTerm}
+                                                                                onChange={(e) => setEmployeeSearchTerm(e.target.value)}
+                                                                                onClick={(e) => e.stopPropagation()}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
+                                                                        {storeEmployees
+                                                                            .filter(emp => emp.name.toLowerCase().includes(employeeSearchTerm.toLowerCase()))
+                                                                            .map(emp => (
+                                                                                <button
+                                                                                    key={emp.id}
+                                                                                    type="button"
+                                                                                    onClick={() => {
+                                                                                        setSelectedEmployeeForRequest(emp.id);
+                                                                                        setIsEmployeeSelectorOpen(false);
+                                                                                        setEmployeeSearchTerm('');
+                                                                                    }}
+                                                                                    className={clsx(
+                                                                                        "w-full px-4 py-3 flex items-center gap-3 transition-colors text-left",
+                                                                                        selectedEmployeeForRequest === emp.id ? "bg-indigo-50" : "hover:bg-slate-50"
+                                                                                    )}
+                                                                                >
+                                                                                    <div className={clsx(
+                                                                                        "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                                                                                        selectedEmployeeForRequest === emp.id ? "bg-indigo-600 text-white" : "bg-indigo-100 text-indigo-600"
+                                                                                    )}>
+                                                                                        {emp.initials}
+                                                                                    </div>
+                                                                                    <div className="flex-1 min-w-0">
+                                                                                        <div className={clsx(
+                                                                                            "text-sm font-bold truncate",
+                                                                                            selectedEmployeeForRequest === emp.id ? "text-indigo-900" : "text-slate-700"
+                                                                                        )}>
+                                                                                            {emp.name}
+                                                                                        </div>
+                                                                                        <div className="text-[10px] text-slate-400 font-medium uppercase tracking-tight truncate">
+                                                                                            {emp.category || 'Empleado'}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    {selectedEmployeeForRequest === emp.id && (
+                                                                                        <CheckCircle size={16} className="text-indigo-600 shrink-0" />
+                                                                                    )}
+                                                                                </button>
+                                                                            ))}
+                                                                        {storeEmployees.filter(emp => emp.name.toLowerCase().includes(employeeSearchTerm.toLowerCase())).length === 0 && (
+                                                                            <div className="px-4 py-8 text-center text-slate-400 text-xs italic">
+                                                                                No se encontraron empleados
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
 
                                                     <div>
@@ -2051,132 +2113,91 @@ const Schedule = () => {
                                             </div>
                                         )}
 
-                                        <div className="space-y-2">
-                                            {(() => {
-                                                const requests = timeOffRequests
-                                                    .filter(r => storeEmployees.some(e => e.id === r.employeeId))
-                                                    .filter(r => ['day_off', 'morning_off', 'afternoon_off'].includes(r.type))
-                                                    .filter(r => {
-                                                        if (r.dates && r.dates.some(d => weekDates.includes(d))) return true;
-                                                        return false;
-                                                    })
-                                                    .sort((a, b) => a.dates[0].localeCompare(b.dates[0]));
+                                        <div className="space-y-4">
+                                            <h3 className="flex items-center gap-2 text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
+                                                <Calendar size={14} className="text-indigo-500" /> Solicitudes Semanales
+                                            </h3>
+                                            <div className="space-y-2">
+                                                {(() => {
+                                                    const requests = timeOffRequests
+                                                        .filter(r => storeEmployees.some(e => e.id === r.employeeId))
+                                                        .filter(r => ['day_off', 'morning_off', 'afternoon_off'].includes(r.type))
+                                                        .filter(r => {
+                                                            if (r.dates && r.dates.some(d => weekDates.includes(d))) return true;
+                                                            return false;
+                                                        })
+                                                        .sort((a, b) => a.dates[0].localeCompare(b.dates[0]));
 
-                                                if (requests.length === 0) {
-                                                    return <div className="text-xs text-slate-400 italic py-2">No hay otras solicitudes de disponibilidad.</div>;
-                                                }
-
-                                                return requests.map(req => {
-                                                    const emp = employees.find(e => e.id === req.employeeId);
-                                                    const typeLabels: Record<string, { label: string, color: string, icon: any }> = {
-                                                        'day_off': { label: 'Día Libre', color: 'bg-slate-100 text-slate-700 border-slate-200', icon: Calendar },
-                                                        'morning_off': { label: 'Mañana Libre', color: 'bg-orange-50 text-orange-700 border-orange-100', icon: Sun },
-                                                        'afternoon_off': { label: 'Tarde Libre', color: 'bg-purple-50 text-purple-700 border-purple-100', icon: Moon },
-                                                        'early_morning_shift': { label: 'Entrada 9:00', color: 'bg-amber-50 text-amber-700 border-amber-100', icon: Clock },
-                                                    };
-                                                    const config = typeLabels[req.type];
-                                                    const Icon = config.icon;
-
-                                                    const matchingDates = req.dates.filter(d => weekDates.includes(d));
-
-                                                    let dateText = '';
-                                                    if (matchingDates.length === 7) {
-                                                        dateText = 'Semana Completa';
-                                                    } else {
-                                                        dateText = matchingDates.map(d => {
-                                                            const [, m, day] = d.split('-');
-                                                            return `${day}/${m}`;
-                                                        }).join(', ');
+                                                    if (requests.length === 0) {
+                                                        return <div className="text-xs text-slate-400 italic py-2">No hay otras solicitudes de disponibilidad.</div>;
                                                     }
 
-                                                    return (
-                                                        <div key={req.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-center justify-between group">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${config.color.split(' ')[0]} ${config.color.split(' ')[1]}`}>
-                                                                    <Icon size={14} />
-                                                                </div>
-                                                                <div>
-                                                                    <div className="font-bold text-slate-800 text-sm">{emp?.name}</div>
-                                                                    <div className="text-[10px] opacity-70 font-semibold uppercase">{config.label}</div>
-                                                                </div>
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="text-right text-xs text-slate-500 font-medium max-w-[120px] text-right">
-                                                                    {dateText}
-                                                                </div>
-                                                                {!isLocked && (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            setRequestToDelete(req.id);
-                                                                            setIsConfirmDeleteRequestOpen(true);
-                                                                        }}
-                                                                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                                                                        title="Eliminar solicitud"
-                                                                    >
-                                                                        <Trash2 size={14} />
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                });
-                                            })()}
-                                        </div>
-                                    </section>
+                                                    return requests.map(req => {
+                                                        const emp = employees.find(e => e.id === req.employeeId);
+                                                        const typeLabels: Record<string, { label: string, color: string, icon: any }> = {
+                                                            'day_off': { label: 'Día Libre', color: 'bg-slate-100 text-slate-700 border-slate-200', icon: Calendar },
+                                                            'morning_off': { label: 'Mañana Libre', color: 'bg-orange-50 text-orange-700 border-orange-100', icon: Sun },
+                                                            'afternoon_off': { label: 'Tarde Libre', color: 'bg-purple-50 text-purple-700 border-purple-100', icon: Moon },
+                                                            'early_morning_shift': { label: 'Entrada 9:00', color: 'bg-amber-50 text-amber-700 border-amber-100', icon: Clock },
+                                                        };
+                                                        const config = typeLabels[req.type];
+                                                        const Icon = config.icon;
 
-                                    {/* Section 2: Permanent Restrictions */}
-                                    <section>
-                                        <h3 className="flex items-center gap-2 text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b border-slate-200 pb-2">
-                                            <ShieldAlert size={16} /> Restricciones Permanentes
-                                        </h3>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                            {(() => {
-                                                const activePerms = permanentRequests.filter(r => storeEmployees.some(e => e.id === r.employeeId));
+                                                        const matchingDates = req.dates.filter(d => weekDates.includes(d));
 
-                                                if (activePerms.length === 0) {
-                                                    return <div className="col-span-full text-sm text-slate-400 italic text-center py-4 bg-white rounded-xl border border-dashed border-slate-200">No hay restricciones permanentes activas.</div>;
-                                                }
-
-                                                return activePerms.map(perm => {
-                                                    const emp = employees.find(e => e.id === perm.employeeId);
-                                                    const getLabel = () => {
-                                                        switch (perm.type) {
-                                                            case 'morning_only': return 'Solo Mañanas';
-                                                            case 'afternoon_only': return 'Solo Tardes';
-                                                            case 'force_full_days': return 'Descanso en Días Completos';
-                                                            case 'early_morning_shift': return 'Entrada 9:00 (9-14h)';
-                                                            case 'specific_days_off':
-                                                                const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-                                                                return `Libres: ${perm.days?.map(d => days[d]).join(', ')}`;
-                                                            case 'max_afternoons_per_week': return `Máx. ${perm.value} Tardes/Semana`;
-                                                            case 'rotating_days_off': return 'Días Rotativos (Ciclos)';
-                                                            default: return perm.type;
+                                                        let dateText = '';
+                                                        if (matchingDates.length === 7) {
+                                                            dateText = 'Semana Completa';
+                                                        } else {
+                                                            dateText = matchingDates.map(d => {
+                                                                const [, m, day] = d.split('-');
+                                                                return `${day}/${m}`;
+                                                            }).join(', ');
                                                         }
-                                                    };
 
-                                                    return (
-                                                        <div key={perm.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-center justify-between">
-                                                            <div>
-                                                                <div className="font-bold text-slate-800 text-sm">{emp?.name}</div>
-                                                                <div className="text-xs text-indigo-600 font-medium mt-0.5">{getLabel()}</div>
-                                                            </div>
-                                                            {perm.exceptions && perm.exceptions.includes(currentWeekStart) && (
-                                                                <div className="text-[10px] bg-red-100 text-red-700 px-2 py-1 rounded font-bold">
-                                                                    Desactivada esta semana
+                                                        return (
+                                                            <div key={req.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-center justify-between group">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${config.color.split(' ')[0]} ${config.color.split(' ')[1]}`}>
+                                                                        <Icon size={14} />
+                                                                    </div>
+                                                                    <div>
+                                                                        <div className="font-bold text-slate-800 text-sm">{emp?.name}</div>
+                                                                        <div className="text-[10px] opacity-70 font-semibold uppercase">{config.label}</div>
+                                                                    </div>
                                                                 </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                });
-                                            })()}
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="text-right text-xs text-slate-500 font-medium max-w-[120px] text-right">
+                                                                        {dateText}
+                                                                    </div>
+                                                                    {!isLocked && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                setRequestToDelete(req.id);
+                                                                                setIsConfirmDeleteRequestOpen(true);
+                                                                            }}
+                                                                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                                                                            title="Eliminar solicitud"
+                                                                        >
+                                                                            <Trash2 size={14} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    });
+                                                })()}
+                                            </div>
                                         </div>
                                     </section>
+
+                                    {/* Section 2 removed - moved to top dashboard */}
                                 </div>
                             </div>
 
-                            <div className="p-4 bg-white border-t border-slate-100 flex justify-end">
+                            <div className="p-4 bg-white border-t border-slate-100 flex justify-end sticky bottom-0 z-[70] rounded-b-2xl">
                                 <button
                                     onClick={() => setIsAvailabilityModalOpen(false)}
                                     className="px-6 py-2.5 bg-slate-800 text-white font-semibold rounded-xl hover:bg-slate-900 transition-colors shadow-lg shadow-slate-200"
@@ -2604,22 +2625,22 @@ const Schedule = () => {
             {/* Permanent Request Edit Modal */}
             {
                 editingPermanentRequest && (
-                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                        <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                            <div className="bg-purple-600 p-4 flex justify-between items-center text-white">
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar relative">
+                            <div className="bg-purple-600 p-5 flex justify-between items-center text-white shrink-0 rounded-t-2xl sticky top-0 z-[130]">
                                 <h3 className="font-bold text-lg flex items-center gap-2">
                                     <Settings size={20} />
                                     {isLocked ? 'Ver Restricción (Bloqueado)' : 'Gestionar Restricción'}
                                 </h3>
                                 <button
                                     onClick={() => setEditingPermanentRequest(null)}
-                                    className="text-white/80 hover:text-white"
+                                    className="text-white/80 hover:text-white p-2 hover:bg-white/10 rounded-lg transition-colors"
                                 >
                                     <X size={20} />
                                 </button>
                             </div>
 
-                            <div className="p-6 space-y-4">
+                            <div className="p-6 space-y-6 flex-1">
                                 {isLocked && (
                                     <div className="bg-amber-50 text-amber-800 p-3 rounded-lg text-sm border border-amber-200 flex items-center gap-2">
                                         <Loader2 size={16} className="text-amber-600" />
@@ -2635,20 +2656,90 @@ const Schedule = () => {
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Restricción</label>
-                                    <select
-                                        value={editingPermanentRequest.type}
-                                        onChange={(e) => setEditingPermanentRequest({ ...editingPermanentRequest, type: e.target.value as any })}
-                                        className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100 disabled:text-gray-500"
-                                        disabled={isLocked}
-                                    >
-                                        <option value="morning_only">Solo Mañanas</option>
-                                        <option value="afternoon_only">Solo Tardes</option>
-                                        <option value="specific_days_off">Días Libres Fijos</option>
-                                        <option value="max_afternoons_per_week">Máx. Tardes / Semana</option>
-                                        <option value="force_full_days">Descanso en Días Completos</option>
-                                        <option value="early_morning_shift">Entrada 9:00 (Bloque 9-14h)</option>
-                                    </select>
+                                    <label className="premium-label-light">Tipo de Restricción</label>
+                                    <div className="relative" ref={restrictionSelectorRef}>
+                                        <button
+                                            type="button"
+                                            disabled={isLocked}
+                                            onClick={() => setIsRestrictionTypeSelectorOpen(!isRestrictionTypeSelectorOpen)}
+                                            className={clsx(
+                                                "w-full premium-select-light text-left flex items-center gap-3",
+                                                isLocked && "opacity-50 cursor-not-allowed"
+                                            )}
+                                        >
+                                            {(() => {
+                                                const type = [
+                                                    { id: 'morning_only', label: 'Solo Mañanas', icon: Sun, color: 'text-orange-600' },
+                                                    { id: 'afternoon_only', label: 'Solo Tardes', icon: Moon, color: 'text-purple-600' },
+                                                    { id: 'specific_days_off', label: 'Días Libres Fijos', icon: Calendar, color: 'text-blue-600' },
+                                                    { id: 'max_afternoons_per_week', label: 'Máx. Tardes / Semana', icon: TrendingUp, color: 'text-emerald-600' },
+                                                    { id: 'force_full_days', label: 'Días Completos', icon: ShieldAlert, color: 'text-indigo-600' },
+                                                    { id: 'early_morning_shift', label: 'Entrada 9:00', icon: Sunrise, color: 'text-amber-600' },
+                                                    { id: 'rotating_days_off', label: 'Libranza Rotativa', icon: RotateCw, color: 'text-rose-600' },
+                                                    { id: 'fixed_rotating_shift', label: 'Turno Rotativo Fijo', icon: RefreshCw, color: 'text-cyan-600' },
+                                                ].find(t => t.id === editingPermanentRequest.type);
+
+                                                if (type) {
+                                                    const Icon = type.icon;
+                                                    return (
+                                                        <>
+                                                            <Icon size={18} className={type.color} />
+                                                            <span className="font-bold">{type.label}</span>
+                                                        </>
+                                                    );
+                                                }
+                                                return <span className="text-slate-400">Seleccionar tipo...</span>;
+                                            })()}
+                                        </button>
+
+                                        {isRestrictionTypeSelectorOpen && !isLocked && (
+                                            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 z-[110] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                                <div className="max-h-[320px] overflow-y-auto custom-scrollbar p-2 space-y-1">
+                                                    {[
+                                                        { id: 'morning_only', label: 'Solo Mañanas', desc: 'Trabaja solo de mañana.', icon: Sun, color: 'text-orange-600', bg: 'bg-orange-50' },
+                                                        { id: 'afternoon_only', label: 'Solo Tardes', desc: 'Trabaja solo de tarde.', icon: Moon, color: 'text-purple-600', bg: 'bg-purple-50' },
+                                                        { id: 'specific_days_off', label: 'Días Libres Fijos', desc: 'Libra siempre los mismos días.', icon: Calendar, color: 'text-blue-600', bg: 'bg-blue-50' },
+                                                        { id: 'max_afternoons_per_week', label: 'Máx. Tardes / Semana', desc: 'Limitar cargas de tarde.', icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                                                        { id: 'force_full_days', label: 'Días Completos', desc: 'Priorizar jornadas partidas.', icon: ShieldAlert, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+                                                        { id: 'early_morning_shift', label: 'Entrada 9:00', desc: 'Turno especial 9:00 - 14:00.', icon: Sunrise, color: 'text-amber-600', bg: 'bg-amber-50' },
+                                                        { id: 'rotating_days_off', label: 'Libranza Rotativa', desc: 'Ciclos semanales (4-1, etc).', icon: RotateCw, color: 'text-rose-600', bg: 'bg-rose-50' },
+                                                        { id: 'fixed_rotating_shift', label: 'Turno Rotativo Fijo', desc: 'El libre salta un día cada semana.', icon: RefreshCw, color: 'text-cyan-600', bg: 'bg-cyan-50' },
+                                                    ].map((type) => {
+                                                        const Icon = type.icon;
+                                                        return (
+                                                            <button
+                                                                key={type.id}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setEditingPermanentRequest({ ...editingPermanentRequest, type: type.id as any });
+                                                                    setIsRestrictionTypeSelectorOpen(false);
+                                                                }}
+                                                                className={clsx(
+                                                                    "w-full p-3 flex items-center gap-4 transition-all rounded-xl text-left",
+                                                                    editingPermanentRequest.type === type.id ? "bg-indigo-50 border-indigo-100" : "hover:bg-slate-50 border-transparent"
+                                                                )}
+                                                            >
+                                                                <div className={clsx("h-10 w-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm", type.bg, type.color)}>
+                                                                    <Icon size={20} />
+                                                                </div>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className={clsx("text-sm font-bold", editingPermanentRequest.type === type.id ? "text-indigo-900" : "text-slate-700")}>
+                                                                        {type.label}
+                                                                    </div>
+                                                                    <div className="text-[10px] text-slate-400 font-medium">
+                                                                        {type.desc}
+                                                                    </div>
+                                                                </div>
+                                                                {editingPermanentRequest.type === type.id && (
+                                                                    <CheckCircle size={16} className="text-indigo-600 shrink-0" />
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
 
                                 {editingPermanentRequest.type === 'early_morning_shift' && (
@@ -2669,23 +2760,78 @@ const Schedule = () => {
                                     </div>
                                 )}
 
-                                {editingPermanentRequest.type === 'max_afternoons_per_week' ? (
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Número Máximo</label>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            max="7"
-                                            value={editingPermanentRequest.value || 0}
-                                            onChange={(e) => setEditingPermanentRequest({ ...editingPermanentRequest, value: parseInt(e.target.value) })}
-                                            className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100 disabled:text-gray-500"
+                                {editingPermanentRequest.type === 'max_afternoons_per_week' && (
+                                    <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+                                        <label className="premium-label-light">Nº Máximo de Tardes</label>
+                                        <div className="flex items-center gap-4">
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="7"
+                                                value={editingPermanentRequest.value || 0}
+                                                onChange={(e) => setEditingPermanentRequest({ ...editingPermanentRequest, value: parseInt(e.target.value) })}
+                                                className="flex-1 accent-emerald-600 h-2 bg-emerald-100 rounded-lg appearance-none cursor-pointer"
+                                                disabled={isLocked}
+                                            />
+                                            <div className="h-10 w-10 flex items-center justify-center bg-emerald-600 text-white rounded-xl font-bold text-sm shadow-sm">
+                                                {editingPermanentRequest.value || 0}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {editingPermanentRequest.type === 'rotating_days_off' && (
+                                    <div className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                                        <DatePicker
+                                            label="Fecha Inicio de Ciclo"
+                                            value={editingPermanentRequest.referenceDate || ''}
+                                            onChange={(date) => setEditingPermanentRequest({ ...editingPermanentRequest, referenceDate: date })}
+                                            variant="light"
                                             disabled={isLocked}
                                         />
+                                        <div>
+                                            <label className="premium-label-light">Patrón de Ciclo</label>
+                                            <select
+                                                className="premium-select-light w-full"
+                                                value={JSON.stringify(editingPermanentRequest.cycleWeeks || [[0, 6]])}
+                                                onChange={(e) => setEditingPermanentRequest({ ...editingPermanentRequest, cycleWeeks: JSON.parse(e.target.value) })}
+                                                disabled={isLocked}
+                                            >
+                                                <option value={JSON.stringify([[0, 6]])}>4 y 1 (Sáb y Dom)</option>
+                                                <option value={JSON.stringify([[0, 6], [0]])}>Alternar Fines de Semana</option>
+                                                <option value={JSON.stringify([[1], [2], [3], [4], [5], [6]])}>Rotativo L-S (1 día libre)</option>
+                                                <option value={JSON.stringify([[0, 6], [0, 6], [0, 6], [0, 6], [0, 6], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2]])}>Ciclo Especial Responsable (10 semanas)</option>
+                                            </select>
+                                        </div>
                                     </div>
-                                ) : (editingPermanentRequest.type !== 'early_morning_shift' && editingPermanentRequest.type !== 'force_full_days') && (
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            {editingPermanentRequest.type === 'specific_days_off' ? 'Seleccionar Días Libres' : 'Seleccionar Días Aplicables'}
+                                )}
+
+                                {editingPermanentRequest.type === 'fixed_rotating_shift' && (
+                                    <div className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                                        <DatePicker
+                                            label="Fecha de Referencia"
+                                            value={editingPermanentRequest.referenceDate || ''}
+                                            onChange={(date) => setEditingPermanentRequest({ ...editingPermanentRequest, referenceDate: date })}
+                                            variant="light"
+                                            disabled={isLocked}
+                                        />
+                                        <div>
+                                            <label className="premium-label-light">Día Libre Inicial (1=L, 6=S)</label>
+                                            <input
+                                                type="number" min="1" max="6"
+                                                className="premium-input-light w-full"
+                                                placeholder="Ej: 1 para Lunes"
+                                                value={editingPermanentRequest.value || 1}
+                                                onChange={(e) => setEditingPermanentRequest({ ...editingPermanentRequest, value: parseInt(e.target.value) })}
+                                                disabled={isLocked}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                                {(['specific_days_off', 'morning_only', 'afternoon_only', 'early_morning_shift'].includes(editingPermanentRequest.type)) && (
+                                    <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+                                        <label className="premium-label-light">
+                                            {editingPermanentRequest.type === 'specific_days_off' ? 'Días Libres Semanales' : 'Días Aplicables de la Semana'}
                                         </label>
                                         <div className="flex flex-wrap gap-2 text-center">
                                             {[
@@ -2700,6 +2846,7 @@ const Schedule = () => {
                                                 <button
                                                     key={dayObj.i}
                                                     disabled={isLocked}
+                                                    type="button"
                                                     onClick={() => {
                                                         const currentDays = editingPermanentRequest.days || [];
                                                         const newDays = currentDays.includes(dayObj.i)
@@ -2721,68 +2868,70 @@ const Schedule = () => {
                                         </div>
                                     </div>
                                 )}
+                            </div>
 
-                                <div className="pt-4 border-t mt-4 space-y-4">
-                                    {!isLocked ? (
-                                        <>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <button
-                                                    onClick={() => {
-                                                        const currentExceptions = editingPermanentRequest.exceptions || [];
-                                                        if (!currentExceptions.includes(currentWeekStart)) {
-                                                            updatePermanentRequest(editingPermanentRequest.id, {
-                                                                exceptions: [...currentExceptions, currentWeekStart]
-                                                            });
-                                                        }
-                                                        setEditingPermanentRequest(null);
-                                                        showToast('Restricción desactivada para esta semana', 'success');
-                                                    }}
-                                                    className="px-4 py-2 text-sm font-bold text-orange-600 bg-white hover:bg-orange-50 rounded-xl border border-orange-200 transition-colors"
-                                                >
-                                                    Eliminar esta semana
-                                                </button>
-                                                <button
-                                                    onClick={() => setIsConfirmDeletePermOpen(true)}
-                                                    className="px-4 py-2 text-sm font-bold text-red-600 bg-white hover:bg-red-50 rounded-xl border border-red-200 transition-colors"
-                                                >
-                                                    Eliminar siempre
-                                                </button>
-                                            </div>
-
-                                            <div className="flex justify-end items-center gap-3 pt-2">
-                                                <button
-                                                    onClick={() => setEditingPermanentRequest(null)}
-                                                    className="px-6 py-2.5 text-sm font-bold text-slate-500 hover:text-slate-800 transition-colors"
-                                                >
-                                                    Cancelar
-                                                </button>
-                                                <button
-                                                    onClick={() => {
-                                                        updatePermanentRequest(editingPermanentRequest.id, {
-                                                            type: editingPermanentRequest.type,
-                                                            days: editingPermanentRequest.days,
-                                                            value: editingPermanentRequest.value
-                                                        });
-                                                        setEditingPermanentRequest(null);
-                                                        showToast('Cambios guardados correctamente', 'success');
-                                                    }}
-                                                    className="px-8 py-2.5 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 shadow-md shadow-purple-200 transform active:scale-95 transition-all"
-                                                >
-                                                    Guardar
-                                                </button>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="flex justify-end">
+                            <div className="p-6 border-t bg-slate-50/50 shrink-0 rounded-b-2xl space-y-4 sticky bottom-0 z-[100]">
+                                {!isLocked ? (
+                                    <>
+                                        <div className="grid grid-cols-2 gap-3">
                                             <button
-                                                onClick={() => setEditingPermanentRequest(null)}
-                                                className="px-8 py-2.5 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 shadow-lg shadow-slate-200"
+                                                onClick={() => {
+                                                    const currentExceptions = editingPermanentRequest.exceptions || [];
+                                                    if (!currentExceptions.includes(currentWeekStart)) {
+                                                        updatePermanentRequest(editingPermanentRequest.id, {
+                                                            exceptions: [...currentExceptions, currentWeekStart]
+                                                        });
+                                                    }
+                                                    setEditingPermanentRequest(null);
+                                                    showToast('Restricción desactivada para esta semana', 'success');
+                                                }}
+                                                className="px-4 py-2 text-sm font-bold text-orange-600 bg-white hover:bg-orange-50 rounded-xl border border-orange-200 transition-colors"
                                             >
-                                                Cerrar
+                                                Eliminar esta semana
+                                            </button>
+                                            <button
+                                                onClick={() => setIsConfirmDeletePermOpen(true)}
+                                                className="px-4 py-2 text-sm font-bold text-red-600 bg-white hover:bg-red-50 rounded-xl border border-red-200 transition-colors"
+                                            >
+                                                Eliminar siempre
                                             </button>
                                         </div>
-                                    )}
-                                </div>
+
+                                        <div className="flex justify-end items-center gap-3 pt-2">
+                                            <button
+                                                onClick={() => setEditingPermanentRequest(null)}
+                                                className="px-6 py-2.5 text-sm font-bold text-slate-500 hover:text-slate-800 transition-colors"
+                                            >
+                                                Cancelar
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    updatePermanentRequest(editingPermanentRequest.id, {
+                                                        type: editingPermanentRequest.type,
+                                                        days: editingPermanentRequest.days,
+                                                        value: editingPermanentRequest.value,
+                                                        referenceDate: editingPermanentRequest.referenceDate,
+                                                        cycleWeeks: editingPermanentRequest.cycleWeeks
+                                                    });
+                                                    setEditingPermanentRequest(null);
+                                                    showToast('Cambios guardados correctamente', 'success');
+                                                }}
+                                                className="px-8 py-2.5 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 shadow-md shadow-purple-200 transform active:scale-95 transition-all"
+                                            >
+                                                Guardar
+                                            </button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex justify-end">
+                                        <button
+                                            onClick={() => setEditingPermanentRequest(null)}
+                                            className="px-8 py-2.5 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 shadow-lg shadow-slate-200"
+                                        >
+                                            Cerrar
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -2807,6 +2956,7 @@ const Schedule = () => {
                                         value={editingSickInfo.endDate || ''}
                                         onChange={(date) => setEditingSickInfo({ ...editingSickInfo, endDate: date })}
                                         disabled={isLocked}
+                                        variant="light"
                                     />
                                 </div>
                                 <div className="flex justify-end gap-2 pt-2">
@@ -2832,63 +2982,65 @@ const Schedule = () => {
             }
 
             {/* Modification Request Modal */}
-            {isModificationModalOpen && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in-95 duration-200">
-                        <div className="bg-indigo-600 p-4 flex justify-between items-center text-white rounded-t-xl">
-                            <h3 className="font-bold text-lg">Solicitar Modificación de Horario</h3>
-                            <button onClick={() => setIsModificationModalOpen(false)} className="text-white/80 hover:text-white">
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="p-6 space-y-4">
-                            <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm border border-blue-100">
-                                <p className="flex items-start gap-2">
-                                    <Info size={16} className="shrink-0 mt-0.5" />
-                                    El supervisor revisará su solicitud y decidirá si desbloquear el horario para modificaciones.
-                                </p>
+            {
+                isModificationModalOpen && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in-95 duration-200">
+                            <div className="bg-indigo-600 p-4 flex justify-between items-center text-white rounded-t-xl">
+                                <h3 className="font-bold text-lg">Solicitar Modificación de Horario</h3>
+                                <button onClick={() => setIsModificationModalOpen(false)} className="text-white/80 hover:text-white">
+                                    <X size={20} />
+                                </button>
                             </div>
-
-                            {currentSchedule?.approvalStatus === 'rejected' && (
-                                <div className="bg-red-50 text-red-800 p-3 rounded-lg text-sm border border-red-100">
-                                    <p className="font-bold mb-1">Nota de rechazo anterior:</p>
-                                    <p>"{currentSchedule.supervisorNotes || 'Sin nota'}"</p>
+                            <div className="p-6 space-y-4">
+                                <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm border border-blue-100">
+                                    <p className="flex items-start gap-2">
+                                        <Info size={16} className="shrink-0 mt-0.5" />
+                                        El supervisor revisará su solicitud y decidirá si desbloquear el horario para modificaciones.
+                                    </p>
                                 </div>
-                            )}
 
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Motivo de la solicitud *
-                                </label>
-                                <textarea
-                                    value={modificationReason}
-                                    onChange={(e) => setModificationReason(e.target.value)}
-                                    className="w-full border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 min-h-[100px] p-3 text-sm"
-                                    placeholder="Explique por qué necesita modificar el horario aprobado..."
-                                    autoFocus
-                                />
-                            </div>
-                            <div className="flex justify-end gap-2 pt-2">
-                                <button
-                                    onClick={() => setIsModificationModalOpen(false)}
-                                    className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    onClick={handleRequestModification}
-                                    disabled={!modificationReason.trim()}
-                                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                                >
-                                    <Send size={16} />
-                                    Enviar Solicitud
-                                </button>
+                                {currentSchedule?.approvalStatus === 'rejected' && (
+                                    <div className="bg-red-50 text-red-800 p-3 rounded-lg text-sm border border-red-100">
+                                        <p className="font-bold mb-1">Nota de rechazo anterior:</p>
+                                        <p>"{currentSchedule.supervisorNotes || 'Sin nota'}"</p>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Motivo de la solicitud *
+                                    </label>
+                                    <textarea
+                                        value={modificationReason}
+                                        onChange={(e) => setModificationReason(e.target.value)}
+                                        className="w-full border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 min-h-[100px] p-3 text-sm"
+                                        placeholder="Explique por qué necesita modificar el horario aprobado..."
+                                        autoFocus
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-2 pt-2">
+                                    <button
+                                        onClick={() => setIsModificationModalOpen(false)}
+                                        className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        onClick={handleRequestModification}
+                                        disabled={!modificationReason.trim()}
+                                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                    >
+                                        <Send size={16} />
+                                        Enviar Solicitud
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 

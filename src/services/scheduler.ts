@@ -186,6 +186,26 @@ export const generateWeeklySchedule = (
                 }
             }
 
+            if (!permDayOff) {
+                const fixedRotReq = userPermRequests.find(r => r.type === 'fixed_rotating_shift' && r.referenceDate && r.value !== undefined);
+                if (fixedRotReq && fixedRotReq.referenceDate) {
+                    const cycleStart = new Date(fixedRotReq.referenceDate);
+                    const currentWeek = new Date(weekStartDate);
+                    const diffTime = currentWeek.getTime() - cycleStart.getTime();
+                    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                    const diffWeeks = Math.floor(diffDays / 7);
+
+                    if (diffWeeks >= 0) {
+                        // Rotation index: Mon(1) to Sat(6). 6 days cycle.
+                        const startDay = fixedRotReq.value || 1;
+                        const currentOffDay = 1 + ((startDay - 1 + diffWeeks) % 6);
+                        if (dayOfWeek === currentOffDay) {
+                            permDayOff = fixedRotReq;
+                        }
+                    }
+                }
+            }
+
             if (timeOffReq?.type === 'sick_leave') dayStatus[date] = 'sick_leave';
             else if (timeOffReq?.type === 'maternity_paternity') dayStatus[date] = 'maternity_paternity';
             else if (timeOffReq?.type === 'vacation') dayStatus[date] = 'vacation';
@@ -626,6 +646,25 @@ export const validatePermanentRestrictions = (
                             warnings.push(`Restricción Violada (Rotativo): ${emp.name} debe librar el ${dayName} esta semana (Semana ${cycleIndex + 1} del ciclo) pero tiene turno.`);
                         }
                     });
+                }
+            }
+        }
+
+        if (req.type === 'fixed_rotating_shift' && req.referenceDate && req.value !== undefined) {
+            const cycleStart = new Date(req.referenceDate);
+            const currentWeek = new Date(schedule.weekStartDate);
+            const diffTime = currentWeek.getTime() - cycleStart.getTime();
+            const diffWeeks = Math.floor(Math.round(diffTime / (1000 * 60 * 60 * 24)) / 7);
+
+            if (diffWeeks >= 0) {
+                const startDay = req.value || 1;
+                const currentOffDayIndex = (startDay - 1 + diffWeeks) % 6;
+                const currentOffDay = 1 + currentOffDayIndex;
+
+                const shift = empShifts.find(s => getDayIndex(s.date) === currentOffDay);
+                if (shift && shift.type !== 'off' && shift.type !== 'holiday' && shift.type !== 'vacation' && shift.type !== 'sick_leave' && shift.type !== 'maternity_paternity') {
+                    const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][currentOffDay];
+                    warnings.push(`Restricción Violada (Turno Rotativo Fijo): ${emp.name} debe librar el ${dayName} esta semana pero tiene turno.`);
                 }
             }
         }
