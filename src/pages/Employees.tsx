@@ -4,22 +4,26 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import AddEmployeeModal from '../components/employees/AddEmployeeModal';
 import EditEmployeeModal from '../components/employees/EditEmployeeModal';
+import PermanentRequestsModal from '../components/employees/PermanentRequestsModal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { parseLocalDate, formatLocalDate } from '../services/dateUtils';
 import {
     Plus, Trash2, Pencil, CalendarClock, Plane,
     TrendingUp, Activity, AlertCircle, Clock, RotateCcw,
-    Users, ShieldAlert, X
+    Users, ShieldAlert, X, FileText
 } from 'lucide-react';
 import { DatePicker } from '../components/DatePicker';
-import type { Employee, EmployeeCategory, PermanentRequestType, TimeOffType } from '../types';
+import type { Employee, TimeOffType } from '../types';
 import clsx from 'clsx';
+import VacationModal from '../components/employees/VacationModal';
+import TempHoursModal from '../components/employees/TempHoursModal';
+import ILTReportModal from '../components/employees/ILTReportModal';
 
 const EmployeesPage: React.FC = () => {
     const { user } = useAuth();
     const { employees, addEmployee, updateEmployee, deactivateEmployee, reactivateEmployee, permanentRequests, addPermanentRequest, removePermanentRequest, addTimeOff, removeTimeOff, timeOffRequests, schedules } = useStore();
     const { showToast } = useToast();
-    const { addTempHours, removeTempHours } = useStore();
+    const { removeTempHours } = useStore();
 
     if (!user) return null;
 
@@ -27,22 +31,11 @@ const EmployeesPage: React.FC = () => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
 
-
-
-
     // Perm Request State
     const [isPermModalOpen, setIsPermModalOpen] = useState(false);
     const [permEmpId, setPermEmpId] = useState<string | null>(null);
-    const [newPermType, setNewPermType] = useState<PermanentRequestType>('morning_only');
-    const [selectedDays, setSelectedDays] = useState<number[]>([]);
-    const [maxAfternoons, setMaxAfternoons] = useState(3);
     const [isConfirmDeletePermOpen, setIsConfirmDeletePermOpen] = useState(false);
     const [reqToDelete, setReqToDelete] = useState<string | null>(null);
-    // Rotating Days State
-    const [rotatingCycleWeeks, setRotatingCycleWeeks] = useState(2);
-    const [rotatingCycleDays, setRotatingCycleDays] = useState<number[][]>([[], []]); // [[week1days], [week2days]]
-    const [rotatingRefDate, setRotatingRefDate] = useState('');
-    const [fixedRotatingStartDay, setFixedRotatingStartDay] = useState<number>(1); // 1 = Monday
 
     // Sick Leave State
     const [isSickModalOpen, setIsSickModalOpen] = useState(false);
@@ -62,6 +55,7 @@ const EmployeesPage: React.FC = () => {
     const [isDeactivateModalOpen, setIsDeactivateModalOpen] = useState(false);
     const [employeeToDeactivateId, setEmployeeToDeactivateId] = useState<string | null>(null);
     const [deactivationReason, setDeactivationReason] = useState('');
+    const [deactivationDate, setDeactivationDate] = useState('');
     const [showInactive, setShowInactive] = useState(false);
     // Reactivation Modal State
     const [isReactivateModalOpen, setIsReactivateModalOpen] = useState(false);
@@ -74,11 +68,12 @@ const EmployeesPage: React.FC = () => {
     const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
     const [historyEmpId, setHistoryEmpId] = useState<string | null>(null);
     const [isFullHistoryModalOpen, setIsFullHistoryModalOpen] = useState(false); // New state for full history
+    const [isILTModalOpen, setIsILTModalOpen] = useState(false);
 
     const getFullStoreHistory = () => {
         if (!user) return [];
         const storeEmployees = employees.filter(e => e.establishmentId === user.establishmentId);
-        const historyEntries: { empId: string, empName: string, date: string, type: 'hired' | 'terminated' | 'rehired', reason?: string }[] = [];
+        const historyEntries: { empId: string, empName: string, date: string, type: 'hired' | 'terminated' | 'rehired', reason?: string, contractEndDate?: string, contractStartDate?: string }[] = [];
 
         storeEmployees.forEach(emp => {
             if (emp.history) {
@@ -88,7 +83,9 @@ const EmployeesPage: React.FC = () => {
                         empName: emp.name,
                         date: h.date,
                         type: h.type as 'hired' | 'terminated' | 'rehired',
-                        reason: h.reason
+                        reason: h.reason,
+                        contractEndDate: h.contractEndDate,
+                        contractStartDate: h.contractStartDate
                     });
                 });
             }
@@ -100,29 +97,23 @@ const EmployeesPage: React.FC = () => {
 
     // Form State
     // Edit State Trackers
-    const [editingPermReqId, setEditingPermReqId] = useState<string | null>(null);
     const [editingSickInfoId, setEditingSickInfoId] = useState<string | null>(null);
     const [editingTempHoursId, setEditingTempHoursId] = useState<{ empId: string, adjId: string } | null>(null);
+
     // Add Modal Extra State
 
 
     // Vacation Modal State
     const [isVacationModalOpen, setIsVacationModalOpen] = useState(false);
     const [vacEmpId, setVacEmpId] = useState<string>('');
-    const [planningYear, setPlanningYear] = useState<number>(new Date().getFullYear());
 
-    const [vacStartDate, setVacStartDate] = useState('');
-    const [vacEndDate, setVacEndDate] = useState('');
-    const [vacationRanges, setVacationRanges] = useState<{ start: string, end: string }[]>([]);
-    const [deletingVacationId, setDeletingVacationId] = useState<string | null>(null);
-    const [isConfirmDeleteVacationOpen, setIsConfirmDeleteVacationOpen] = useState(false);
+    // Actually, I am deleting the block below.
 
-    // Temp Hours Modal
+
     const [isTempHoursModalOpen, setIsTempHoursModalOpen] = useState(false);
     const [tempEmpId, setTempEmpId] = useState('');
-    const [tempStart, setTempStart] = useState('');
-    const [tempEnd, setTempEnd] = useState('');
-    const [tempHoursVal, setTempHoursVal] = useState(40);
+
+    // Deletion State for Panel
     const [deletingTempId, setDeletingTempId] = useState<{ empId: string, adjId: string } | null>(null);
     const [isConfirmDeleteTempOpen, setIsConfirmDeleteTempOpen] = useState(false);
 
@@ -222,19 +213,11 @@ const EmployeesPage: React.FC = () => {
         }
     };
 
-    const handleAdd = (employeeData: any, permRequestData?: any) => {
-        const newId = addEmployee({
+    const handleAdd = (employeeData: any) => {
+        addEmployee({
             ...employeeData,
             establishmentId: user.establishmentId,
         });
-
-        if (permRequestData) {
-            addPermanentRequest({
-                employeeId: newId,
-                type: permRequestData.type,
-                days: permRequestData.days
-            });
-        }
 
         showToast('Empleado añadido correctamente', 'success');
         setIsAddModalOpen(false);
@@ -243,17 +226,25 @@ const EmployeesPage: React.FC = () => {
     const handleDeactivateClick = (id: string) => {
         setEmployeeToDeactivateId(id);
         setDeactivationReason('');
+        setDeactivationDate('');
         setIsDeactivateModalOpen(true);
     };
 
     const handleConfirmDeactivate = (e: React.FormEvent) => {
         e.preventDefault();
+
+        if (!deactivationDate) {
+            showToast('Por favor indica la fecha de fin de contrato', 'error');
+            return;
+        }
+
         if (employeeToDeactivateId && deactivationReason) {
-            deactivateEmployee(employeeToDeactivateId, deactivationReason);
+            deactivateEmployee(employeeToDeactivateId, deactivationReason, deactivationDate);
             showToast('Empleado dado de baja correctamente', 'success');
             setIsDeactivateModalOpen(false);
             setEmployeeToDeactivateId(null);
             setDeactivationReason('');
+            setDeactivationDate('');
         }
     };
 
@@ -279,169 +270,9 @@ const EmployeesPage: React.FC = () => {
     const openPermModal = (id: string) => {
         setPermEmpId(id);
         setIsPermModalOpen(true);
-        setNewPermType('morning_only');
-        setSelectedDays([]);
-        setMaxAfternoons(3);
     }
 
-    const handleAddPerm = () => {
-        if (!permEmpId) return;
 
-        const emp = employees.find(e => e.id === permEmpId);
-        if (newPermType === 'fixed_rotating_shift' && emp && emp.weeklyHours < 40) {
-            showToast('El turno rotativo fijo solo es aplicable a empleados de 40 horas', 'error');
-            return;
-        }
-
-        if (newPermType === 'rotating_days_off' || newPermType === 'fixed_rotating_shift') {
-            if (!rotatingRefDate) {
-                showToast('Selecciona una fecha de inicio para el ciclo (Lunes)', 'error');
-                return;
-            }
-        }
-
-        if (editingPermReqId) {
-            removePermanentRequest(editingPermReqId);
-        }
-
-        addPermanentRequest({
-            employeeId: permEmpId,
-            type: newPermType,
-            days: selectedDays.length > 0 ? selectedDays : undefined,
-            value: newPermType === 'max_afternoons_per_week' ? maxAfternoons :
-                newPermType === 'fixed_rotating_shift' ? fixedRotatingStartDay : undefined,
-            cycleWeeks: newPermType === 'rotating_days_off' ? rotatingCycleDays.slice(0, rotatingCycleWeeks) : undefined,
-            referenceDate: (newPermType === 'rotating_days_off' || newPermType === 'fixed_rotating_shift') ? rotatingRefDate : undefined
-        });
-
-        showToast(editingPermReqId ? 'Petición editada correctamente' : 'Petición permanente añadida', 'success');
-
-        if (editingPermReqId) {
-            setIsPermModalOpen(false);
-            setEditingPermReqId(null);
-        }
-
-        // Reset
-        setNewPermType('morning_only');
-        setSelectedDays([]);
-        setMaxAfternoons(3);
-        setRotatingCycleWeeks(2);
-        setRotatingCycleDays([[], []]);
-        setRotatingRefDate('');
-        setFixedRotatingStartDay(1);
-    };
-
-    const toggleDay = (day: number) => {
-        setSelectedDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]);
-    };
-
-    const employeePermRequests = permanentRequests.filter(r => r.employeeId === permEmpId);
-
-    const checkOverlap = (newStart: string, newEnd: string) => {
-        const start = parseLocalDate(newStart).getTime();
-        const end = parseLocalDate(newEnd).getTime();
-
-        // 1. Check against ranges currently in the "Added Segments" list
-        for (const range of vacationRanges) {
-            const rStart = parseLocalDate(range.start).getTime();
-            const rEnd = parseLocalDate(range.end).getTime();
-            // Ranges overlap if (StartA <= EndB) and (EndA >= StartB)
-            if (start <= rEnd && end >= rStart) {
-                return { type: 'local', range };
-            }
-        }
-
-        // 2. Check against existing saved requests in the database
-        const existingVacations = timeOffRequests.filter(req =>
-            req.employeeId === vacEmpId &&
-            req.type === 'vacation'
-        );
-
-        for (const req of existingVacations) {
-            // Check startDate/endDate if available
-            if (req.startDate && req.endDate) {
-                const rStart = parseLocalDate(req.startDate).getTime();
-                const rEnd = parseLocalDate(req.endDate).getTime();
-                if (start <= rEnd && end >= rStart) return { type: 'db', req };
-            }
-            // Fallback/Double check individual dates
-            else if (req.dates && req.dates.length > 0) {
-                const hasOverlap = req.dates.some(d => {
-                    const t = parseLocalDate(d).getTime();
-                    return t >= start && t <= end;
-                });
-                if (hasOverlap) return { type: 'db', req };
-            }
-        }
-
-        return null;
-    };
-
-    const handleAddVacation = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!vacEmpId) return;
-
-        const rangesToSave = [...vacationRanges];
-
-        // If there is a pending range in inputs, try to add it
-        if (vacStartDate && vacEndDate) {
-            const overlap = checkOverlap(vacStartDate, vacEndDate);
-            if (overlap) {
-                if (overlap.type === 'local') {
-                    showToast('El rango que intentas guardar se solapa con otro de la lista.', 'error');
-                } else {
-                    showToast('El rango que intentas guardar se solapa con vacaciones ya existentes.', 'error');
-                }
-                return;
-            }
-            rangesToSave.push({ start: vacStartDate, end: vacEndDate });
-        }
-
-        if (rangesToSave.length === 0) {
-            showToast('Añade al menos un tramo de fechas', 'error');
-            return;
-        }
-
-        // Calculate total days
-        let newDaysCount = 0;
-        rangesToSave.forEach(range => {
-            const start = parseLocalDate(range.start);
-            const end = parseLocalDate(range.end);
-            const diffTime = Math.abs(end.getTime() - start.getTime());
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-            newDaysCount += diffDays;
-        });
-
-        const usedDays = getVacationDaysForYear(vacEmpId, planningYear);
-        if (usedDays + newDaysCount > 31) {
-            showToast(`Error: El total de vacaciones (${usedDays + newDaysCount} días) supera el límite de 31 días.`, 'error');
-            return;
-        }
-
-        // Save all ranges
-        rangesToSave.forEach(range => {
-            const start = parseLocalDate(range.start);
-            const end = parseLocalDate(range.end);
-            const dates: string[] = [];
-            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                dates.push(formatLocalDate(d));
-            }
-            addTimeOff({
-                employeeId: vacEmpId,
-                type: 'vacation',
-                dates: dates,
-                startDate: range.start,
-                endDate: range.end
-            });
-        });
-
-        showToast('Vacaciones registradas correctamente', 'success');
-        setIsVacationModalOpen(false);
-        setVacEmpId('');
-        setVacStartDate('');
-        setVacEndDate('');
-        setVacationRanges([]);
-    };
 
     const handleAddSickLeave = (e: React.FormEvent) => {
         e.preventDefault();
@@ -505,42 +336,7 @@ const EmployeesPage: React.FC = () => {
 
 
 
-    const addRange = () => {
-        if (vacStartDate && vacEndDate) {
-            const start = new Date(vacStartDate);
-            const end = new Date(vacEndDate);
-            if (end < start) {
-                showToast('La fecha fin debe ser posterior a la fecha inicio', 'error');
-                return;
-            }
 
-            const overlap = checkOverlap(vacStartDate, vacEndDate);
-            if (overlap) {
-                if (overlap.type === 'local') {
-                    showToast('Este rango se solapa con otro tramo ya añadido en la lista.', 'error');
-                } else {
-                    showToast('Este rango se solapa con unas vacaciones ya registradas anteriormente.', 'error');
-                }
-                return;
-            }
-
-            setVacationRanges(prev => [...prev, { start: vacStartDate, end: vacEndDate }]);
-            setVacStartDate('');
-            setVacEndDate('');
-        }
-    };
-
-    const removeRange = (index: number) => {
-        setVacationRanges(prev => prev.filter((_, i) => i !== index));
-    };
-
-    const getVacationDaysForYear = (empId: string, year: number) => {
-        return timeOffRequests
-            .filter(req => req.employeeId === empId && req.type === 'vacation')
-            .flatMap(req => req.dates)
-            .filter(dateStr => parseLocalDate(dateStr).getFullYear() === year)
-            .length;
-    };
 
     return (
         <div className="min-h-screen bg-[#F8FAFC] p-4 lg:p-8">
@@ -572,6 +368,21 @@ const EmployeesPage: React.FC = () => {
                                 )}
                             >
                                 <Activity size={16} /> <span className="hidden sm:inline">Bajas</span>
+                            </button>
+
+                            <div className="w-px h-6 bg-slate-200 mx-2"></div>
+
+                            <button
+                                onClick={() => setIsILTModalOpen(true)}
+                                className={clsx(
+                                    "px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2",
+                                    (new Date().getDate() >= 20 && new Date().getDate() <= 30)
+                                        ? "bg-indigo-50 text-indigo-600 animate-pulse hover:animate-none hover:bg-indigo-100"
+                                        : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                                )}
+                                title="Informe ILT"
+                            >
+                                <FileText size={18} /> <span className="hidden sm:inline">Informe ILT</span>
                             </button>
                         </div>
 
@@ -634,6 +445,8 @@ const EmployeesPage: React.FC = () => {
                                 <span>Registrar Baja</span>
                             </button>
 
+
+
                             <div className="w-px h-8 bg-slate-200 mx-2 hidden xl:block"></div>
 
                             {/* Inactive Toggle Button */}
@@ -695,13 +508,18 @@ const EmployeesPage: React.FC = () => {
                                                         req.type === 'afternoon_only' ? 'Solo Tardes' :
                                                             req.type === 'specific_days_off' ? 'Días Fijos' :
                                                                 req.type === 'rotating_days_off' ? 'Días Rotativos (Ciclos)' :
-                                                                    req.type === 'fixed_rotating_shift' ? 'Turno Rotativo Fijo' : 'Otras'}
+                                                                    req.type === 'fixed_rotating_shift' ? 'Turno Rotativo Fijo' :
+                                                                        req.type === 'max_afternoons_per_week' ? `Máx. Tardes: ${req.value || 0}` :
+                                                                            req.type === 'no_split' ? 'No Turno Partido' :
+                                                                                req.type === 'force_full_days' ? 'Solo Jornadas Completas' :
+                                                                                    req.type === 'custom_days_off' ? 'Libranza Personalizada' :
+                                                                                        'Otras Restricciones'}
                                                 </p>
                                             </div>
                                         </div>
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={() => { setPermEmpId(req.employeeId); setNewPermType(req.type as any); setIsPermModalOpen(true); }} className="p-1.5 text-purple-400 hover:text-purple-600 hover:bg-purple-100 rounded-lg transition-colors"><Pencil size={12} /></button>
-                                            <button onClick={() => { setReqToDelete(req.id); setIsConfirmDeletePermOpen(true); }} className="p-1.5 text-purple-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={12} /></button>
+                                            <button onClick={() => { setPermEmpId(req.employeeId); setIsPermModalOpen(true); }} className="p-1.5 text-purple-400 hover:text-purple-600 hover:bg-purple-100 rounded-lg transition-colors"><Pencil size={12} /></button>
+                                            <button onClick={() => { /* setReqToDelete(req.id); setIsConfirmDeletePermOpen(true); */ removePermanentRequest(req.id); showToast('Petición eliminada', 'success'); }} className="p-1.5 text-purple-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={12} /></button>
                                         </div>
                                     </div>
                                 );
@@ -799,6 +617,7 @@ const EmployeesPage: React.FC = () => {
                         })()}
                     </div>
                 </div>
+
 
 
                 {/* Active Vacations Panel (This Week) */}
@@ -1045,7 +864,7 @@ const EmployeesPage: React.FC = () => {
                             {/* Quick Actions Bar */}
                             <div className="grid grid-cols-3 gap-2 w-full pt-4 border-t border-slate-100">
                                 <button
-                                    onClick={() => { if (emp.active) { setTempEmpId(emp.id); setTempStart(''); setTempEnd(''); setTempHoursVal(40); setIsTempHoursModalOpen(true); } }}
+                                    onClick={() => { if (emp.active) { setTempEmpId(emp.id); setIsTempHoursModalOpen(true); } }}
                                     className={clsx(
                                         "flex flex-col items-center justify-center p-2 rounded-2xl transition-all gap-1 group/btn",
                                         emp.active ? "hover:bg-orange-50 text-slate-400 hover:text-orange-600" : "opacity-30 cursor-not-allowed"
@@ -1117,6 +936,7 @@ const EmployeesPage: React.FC = () => {
                 isOpen={isAddModalOpen}
                 onClose={() => setIsAddModalOpen(false)}
                 onAdd={handleAdd}
+                sickEmployees={getSickEmployees()}
             />
 
             {/* Edit Modal */}
@@ -1131,686 +951,41 @@ const EmployeesPage: React.FC = () => {
             />
 
 
-            {/* Permanent Requests Modal */}
-            {/* Permanent Requests Modal */}
-            {
-                isPermModalOpen && (
-                    <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-md p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-                            <div className="flex justify-between items-center mb-8">
-                                <h2 className="text-2xl font-black text-slate-900 tracking-tight">Peticiones</h2>
-                                <button onClick={() => setIsPermModalOpen(false)} className="text-slate-500 hover:text-slate-900 transition-colors bg-slate-50 p-2 rounded-xl border border-slate-200">
-                                    <X size={20} />
-                                </button>
-                            </div>
-
-                            <div className="overflow-y-auto custom-scrollbar flex-1 pr-2">
-                                {!permEmpId ? (
-                                    <div className="mb-8">
-                                        <label className="premium-label-light">Selecciona Empleado</label>
-                                        <select
-                                            className="premium-select-light w-full"
-                                            onChange={(e) => setPermEmpId(e.target.value)}
-                                            value={permEmpId || ''}
-                                        >
-                                            <option value="" className="bg-white text-slate-900">-- Seleccionar --</option>
-                                            {filteredEmployees.map(e => (
-                                                <option key={e.id} value={e.id} className="bg-white text-slate-900">{e.name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                ) : (
-                                    <div className="mb-6 flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                                        <div>
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Empleado Seleccionado</p>
-                                            <p className="text-xl font-black text-slate-900 tracking-tight">{filteredEmployees.find(e => e.id === permEmpId)?.name}</p>
-                                        </div>
-                                        <button onClick={() => setPermEmpId(null)} className="text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 transition-all">Cambiar</button>
-                                    </div>
-                                )}
-
-                                {permEmpId && (
-                                    <>
-                                        <div className="mb-8 space-y-3">
-                                            {employeePermRequests.length > 0 ? (
-                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Restricciones Activas</p>
-                                            ) : null}
-                                            {employeePermRequests.length > 0 ? employeePermRequests.map(req => (
-                                                <div key={req.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all group">
-                                                    <div className="text-sm">
-                                                        <div className="font-black text-slate-900 uppercase text-xs tracking-tight">
-                                                            {req.type === 'morning_only' ? 'Solo Mañanas' :
-                                                                req.type === 'afternoon_only' ? 'Solo Tardes' :
-                                                                    req.type === 'max_afternoons_per_week' ? `Máximo ${req.value} Tardes/Semana` :
-                                                                        req.type === 'force_full_days' ? 'Descanso en Días Completos' :
-                                                                            req.type === 'rotating_days_off' ? 'Días Rotativos (Ciclos)' :
-                                                                                req.type === 'early_morning_shift' ? 'Entrada 9:00' :
-                                                                                    req.type === 'fixed_rotating_shift' ? 'Turno Rotativo Fijo' : 'Días Libres Fijos'}
-                                                        </div>
-                                                        {(req.days && req.days.length > 0) && (
-                                                            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
-                                                                {req.days.sort((a, b) => (a === 0 ? 7 : a) - (b === 0 ? 7 : b)).map(d => ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][d]).join(', ')}
-                                                            </div>
-                                                        )}
-                                                        {req.type === 'rotating_days_off' && (
-                                                            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
-                                                                Ciclo de {req.cycleWeeks?.length || 2} semanas
-                                                            </div>
-                                                        )}
-                                                        {req.type === 'fixed_rotating_shift' && (
-                                                            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
-                                                                Rotativo - Empieza: {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][req.value || 0]}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setReqToDelete(req.id);
-                                                            setIsConfirmDeletePermOpen(true);
-                                                        }}
-                                                        className="text-slate-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </div>
-                                            )) : (
-                                                <div className="py-8 text-center flex flex-col items-center gap-3 bg-slate-50 rounded-[2rem] border border-slate-100">
-                                                    <div className="w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center">
-                                                        <AlertCircle size={24} className="text-slate-300" />
-                                                    </div>
-                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sin restricciones activas</p>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="border-t border-slate-100 pt-8">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6">Añadir Restricción</p>
-                                            <div className="space-y-6">
-                                                <select
-                                                    className="premium-select-light w-full"
-                                                    value={newPermType}
-                                                    onChange={e => setNewPermType(e.target.value as PermanentRequestType)}
-                                                >
-                                                    <option value="morning_only" className="bg-white text-slate-900">Solo Mañanas</option>
-                                                    <option value="afternoon_only" className="bg-white text-slate-900">Solo Tardes</option>
-                                                    <option value="specific_days_off" className="bg-white text-slate-900">Días Libres Fijos</option>
-                                                    <option value="rotating_days_off" className="bg-white text-slate-900">Turnos Rotativos (Libranzas Alternas)</option>
-                                                    <option value="fixed_rotating_shift" className="bg-white text-slate-900">Turno Rotativo Fijo (Salto de día)</option>
-                                                    <option value="max_afternoons_per_week" className="bg-white text-slate-900">Máximo de Tardes Semanales</option>
-                                                    <option value="force_full_days" className="bg-white text-slate-900">Descanso en Días Completos</option>
-                                                    <option value="early_morning_shift" className="bg-white text-slate-900">Entrada 9:00 (Bloque 9-14h)</option>
-                                                </select>
-
-                                                <div className="flex flex-col gap-1">
-                                                    {newPermType === 'rotating_days_off' ? (
-                                                        <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 space-y-6">
-                                                            <div className="flex gap-4">
-                                                                <div className="flex-1">
-                                                                    <label className="premium-label-light">Duración Ciclo</label>
-                                                                    <select
-                                                                        value={rotatingCycleWeeks}
-                                                                        onChange={(e) => {
-                                                                            const n = Number(e.target.value);
-                                                                            setRotatingCycleWeeks(n);
-                                                                            const newArr = new Array(n).fill([]).map((_, i) => rotatingCycleDays[i] || []);
-                                                                            setRotatingCycleDays(newArr);
-                                                                        }}
-                                                                        className="premium-select-light w-full text-xs"
-                                                                    >
-                                                                        <option value={2} className="bg-white text-slate-900">2 Semanas</option>
-                                                                        <option value={3} className="bg-white text-slate-900">3 Semanas</option>
-                                                                        <option value={4} className="bg-white text-slate-900">4 Semanas</option>
-                                                                    </select>
-                                                                </div>
-                                                                <div className="flex-1">
-                                                                    <label className="premium-label-light">Inicio (S-1)</label>
-                                                                    <DatePicker variant="light"
-                                                                        value={rotatingRefDate}
-                                                                        onChange={setRotatingRefDate}
-                                                                    />
-                                                                </div>
-                                                            </div>
-                                                            <div className="space-y-3">
-                                                                {Array.from({ length: rotatingCycleWeeks }).map((_, weekIndex) => (
-                                                                    <div key={weekIndex} className="bg-white p-4 rounded-xl border border-slate-200/50">
-                                                                        <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-3">Semana {weekIndex + 1}</p>
-                                                                        <div className="flex gap-1.5 justify-between">
-                                                                            {[1, 2, 3, 4, 5, 6, 0].map(day => (
-                                                                                <button
-                                                                                    key={day}
-                                                                                    type="button"
-                                                                                    onClick={() => {
-                                                                                        const currentDays = rotatingCycleDays[weekIndex] || [];
-                                                                                        const newDays = currentDays.includes(day)
-                                                                                            ? currentDays.filter(d => d !== day)
-                                                                                            : [...currentDays, day];
-                                                                                        const newCycleDays = [...rotatingCycleDays];
-                                                                                        newCycleDays[weekIndex] = newDays;
-                                                                                        setRotatingCycleDays(newCycleDays);
-                                                                                    }}
-                                                                                    className={clsx(
-                                                                                        "w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-black transition-all",
-                                                                                        (rotatingCycleDays[weekIndex] || []).includes(day)
-                                                                                            ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
-                                                                                            : 'bg-slate-100 text-slate-400 hover:text-slate-600 border border-slate-200'
-                                                                                    )}
-                                                                                >
-                                                                                    {['D', 'L', 'M', 'X', 'J', 'V', 'S'][day === 0 ? 0 : day]}
-                                                                                </button>
-                                                                            ))}
-                                                                        </div>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    ) : newPermType === 'fixed_rotating_shift' ? (
-                                                        <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 space-y-6">
-                                                            <div className="flex gap-4">
-                                                                <div className="flex-1">
-                                                                    <label className="premium-label-light">Semana Inicio</label>
-                                                                    <DatePicker variant="light"
-                                                                        value={rotatingRefDate}
-                                                                        onChange={setRotatingRefDate}
-                                                                    />
-                                                                </div>
-                                                                <div className="flex-1">
-                                                                    <label className="premium-label-light">Libranza Inicial</label>
-                                                                    <select
-                                                                        value={fixedRotatingStartDay}
-                                                                        onChange={(e) => setFixedRotatingStartDay(Number(e.target.value))}
-                                                                        className="premium-select-light w-full text-xs"
-                                                                    >
-                                                                        <option value={1} className="bg-white text-slate-900">Lunes</option>
-                                                                        <option value={2} className="bg-white text-slate-900">Martes</option>
-                                                                        <option value={3} className="bg-white text-slate-900">Miércoles</option>
-                                                                        <option value={4} className="bg-white text-slate-900">Jueves</option>
-                                                                        <option value={5} className="bg-white text-slate-900">Viernes</option>
-                                                                        <option value={6} className="bg-white text-slate-900">Sábado</option>
-                                                                    </select>
-                                                                </div>
-                                                            </div>
-                                                            <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex gap-3">
-                                                                <AlertCircle size={16} className="text-indigo-600 shrink-0" />
-                                                                <p className="text-[10px] text-indigo-600 font-medium leading-relaxed uppercase">
-                                                                    El día de descanso rotará cada semana: Lunes → Martes → ... → Sábado → Lunes.
-                                                                </p>
-                                                            </div>
-                                                        </div>
-                                                    ) : newPermType === 'max_afternoons_per_week' ? (
-                                                        <div className="space-y-4">
-                                                            <label className="premium-label-light">Máximo de Tardes:</label>
-                                                            <div className="grid grid-cols-3 gap-3">
-                                                                {[1, 2, 3].map(num => (
-                                                                    <button
-                                                                        key={num}
-                                                                        type="button"
-                                                                        onClick={() => setMaxAfternoons(num)}
-                                                                        className={clsx(
-                                                                            "py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                                                                            maxAfternoons === num
-                                                                                ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20 border border-purple-500'
-                                                                                : 'bg-slate-100 text-slate-400 border border-slate-200 hover:border-purple-500/50'
-                                                                        )}
-                                                                    >
-                                                                        {num}
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                            <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex gap-3">
-                                                                <AlertCircle size={16} className="text-purple-600 shrink-0" />
-                                                                <p className="text-[10px] text-purple-600 font-medium leading-relaxed uppercase">La jornada partida cuenta como 1 tarde.</p>
-                                                            </div>
-                                                        </div>
-                                                    ) : newPermType === 'force_full_days' ? (
-                                                        <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex gap-3">
-                                                            <AlertCircle className="w-5 h-5 text-indigo-600 shrink-0" />
-                                                            <p className="text-[10px] text-indigo-600 uppercase tracking-widest font-black leading-relaxed">Preferirá jornadas partidas para maximizar días libres completos.</p>
-                                                        </div>
-                                                    ) : newPermType === 'early_morning_shift' ? (
-                                                        <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex gap-3">
-                                                            <Clock className="w-5 h-5 text-amber-600 shrink-0" />
-                                                            <p className="text-[10px] text-amber-600 uppercase tracking-widest font-black leading-relaxed">Trabajará 4 días/semana entrando a las 9:00 (Bloque 5h).</p>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="space-y-4">
-                                                            <label className="premium-label-light">
-                                                                {newPermType === 'specific_days_off' ? 'Selecciona los días libres:' : 'Aplicar solo en estos días (opcional):'}
-                                                            </label>
-                                                            <div className="flex gap-1.5 justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                                                                {[1, 2, 3, 4, 5, 6, 0].map(day => (
-                                                                    <button
-                                                                        key={day}
-                                                                        type="button"
-                                                                        onClick={() => toggleDay(day)}
-                                                                        className={clsx(
-                                                                            "w-9 h-9 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                                                                            selectedDays.includes(day)
-                                                                                ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20'
-                                                                                : 'bg-white text-slate-400 border border-slate-200 hover:border-purple-500/30'
-                                                                        )}
-                                                                    >
-                                                                        {['D', 'L', 'M', 'X', 'J', 'V', 'S'][day === 0 ? 0 : day]}
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="pt-8">
-                                                <button
-                                                    type="button"
-                                                    onClick={handleAddPerm}
-                                                    className="w-full py-4 bg-indigo-600 text-white font-black text-xs uppercase tracking-widest hover:bg-indigo-700 rounded-2xl shadow-lg shadow-indigo-600/20 active:scale-95 transition-all"
-                                                >
-                                                    Añadir Petición
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )
-            }
-
+            <PermanentRequestsModal
+                isOpen={isPermModalOpen}
+                onClose={() => setIsPermModalOpen(false)}
+                employees={employees}
+                requests={permanentRequests}
+                onAdd={(req) => {
+                    addPermanentRequest(req);
+                    showToast('Petición añadida correctamente', 'success');
+                }}
+                onRemove={(id) => {
+                    removePermanentRequest(id);
+                    showToast('Petición eliminada', 'success');
+                }}
+                initialEmployeeId={permEmpId}
+            />
             {/* Vacation Planning Modal */}
-            {
-                isVacationModalOpen && (
-                    <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-lg p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh] overflow-hidden">
-                            <div className="flex justify-between items-center mb-8">
-                                <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
-                                    <Plane className="text-teal-600" /> Vacaciones
-                                </h2>
-                                <button onClick={() => setIsVacationModalOpen(false)} className="text-slate-500 hover:text-slate-900 transition-colors bg-slate-50 p-2 rounded-xl border border-slate-100">
-                                    <X size={20} />
-                                </button>
-                            </div>
+            <VacationModal
+                isOpen={isVacationModalOpen}
+                onClose={() => setIsVacationModalOpen(false)}
+                selectedEmployeeId={vacEmpId}
+                onEmployeeSelect={setVacEmpId}
+            />
 
-                            <form onSubmit={handleAddVacation} className="space-y-6 overflow-y-auto custom-scrollbar flex-1 pr-2">
-                                <div>
-                                    <label className="premium-label-light">Selecciona Empleado</label>
-                                    <select
-                                        className="premium-select-light w-full"
-                                        onChange={(e) => {
-                                            setVacEmpId(e.target.value);
-                                            setVacationRanges([]);
-                                        }}
-                                        value={vacEmpId}
-                                        required
-                                    >
-                                        <option value="" className="bg-white text-slate-900">-- Seleccionar --</option>
-                                        {filteredEmployees.map(e => (
-                                            <option key={e.id} value={e.id} className="bg-white text-slate-900">{e.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
 
-                                {!vacEmpId ? (
-                                    <div className="bg-slate-50 border border-slate-100 border-dashed rounded-[2.5rem] p-12 text-center flex flex-col items-center gap-4">
-                                        <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center border border-slate-100 shadow-sm">
-                                            <Plane size={32} className="text-slate-200" />
-                                        </div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Selecciona un empleado para empezar</p>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
-                                            {[new Date().getFullYear(), new Date().getFullYear() + 1].map(year => (
-                                                <button
-                                                    key={year}
-                                                    type="button"
-                                                    onClick={() => setPlanningYear(year)}
-                                                    className={clsx(
-                                                        "flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                                                        planningYear === year
-                                                            ? "bg-white text-teal-600 shadow-sm"
-                                                            : "text-slate-400 hover:text-slate-600"
-                                                    )}
-                                                >
-                                                    {year}
-                                                </button>
-                                            ))}
-                                        </div>
 
-                                        <div className="bg-gradient-to-br from-teal-50 to-emerald-50 border border-teal-100 rounded-3xl p-6">
-                                            {(() => {
-                                                const today = new Date();
-                                                today.setHours(0, 0, 0, 0);
-                                                let enjoyed = 0;
-                                                let planned = 0;
-
-                                                timeOffRequests
-                                                    .filter(req => req.employeeId === vacEmpId && req.type === 'vacation')
-                                                    .forEach(req => {
-                                                        req.dates.forEach(dStr => {
-                                                            const d = new Date(dStr);
-                                                            if (d.getFullYear() === planningYear) {
-                                                                d.setHours(0, 0, 0, 0);
-                                                                if (d < today) enjoyed++;
-                                                                else planned++;
-                                                            }
-                                                        });
-                                                    });
-
-                                                vacationRanges.forEach(r => {
-                                                    const s = new Date(r.start);
-                                                    const e = new Date(r.end);
-                                                    for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-                                                        if (d.getFullYear() === planningYear) {
-                                                            const current = new Date(d);
-                                                            current.setHours(0, 0, 0, 0);
-                                                            if (current < today) enjoyed++;
-                                                            else planned++;
-                                                        }
-                                                    }
-                                                });
-
-                                                const totalUsed = enjoyed + planned;
-                                                const remaining = 31 - totalUsed;
-
-                                                return (
-                                                    <div className="flex justify-between items-center gap-6">
-                                                        <div>
-                                                            <p className="text-3xl font-black text-slate-900 tracking-tighter mb-1">{remaining}</p>
-                                                            <p className="text-[10px] font-black text-teal-600 uppercase tracking-widest">Días disponibles</p>
-                                                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tight mt-1">de 31 días en {planningYear}</p>
-                                                        </div>
-                                                        <div className="flex gap-6 text-right">
-                                                            <div>
-                                                                <div className="text-xl font-black text-slate-900 mb-1">{enjoyed}</div>
-                                                                <div className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Gozados</div>
-                                                            </div>
-                                                            <div>
-                                                                <div className="text-xl font-black text-indigo-600 mb-1">{planned}</div>
-                                                                <div className="text-[9px] font-black uppercase text-indigo-600 tracking-wider">Plan</div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-
-                                        <div className="space-y-4">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Historial {planningYear}</p>
-                                            <div className="bg-slate-50 rounded-[2rem] border border-slate-100 overflow-hidden max-h-48 overflow-y-auto custom-scrollbar">
-                                                {(() => {
-                                                    const empRequests = timeOffRequests
-                                                        .filter(req => req.employeeId === vacEmpId && req.type === 'vacation')
-                                                        .filter(req => req.dates.some(d => new Date(d).getFullYear() === planningYear))
-                                                        .sort((a, b) => new Date(b.startDate || '').getTime() - new Date(a.startDate || '').getTime());
-
-                                                    if (empRequests.length === 0) {
-                                                        return (
-                                                            <div className="p-8 text-center flex flex-col items-center gap-3">
-                                                                <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center">
-                                                                    <AlertCircle size={18} className="text-slate-200" />
-                                                                </div>
-                                                                <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Sin vacaciones registradas</p>
-                                                            </div>
-                                                        );
-                                                    }
-
-                                                    return (
-                                                        <div className="divide-y divide-slate-100">
-                                                            {empRequests.map(req => {
-                                                                const daysInYear = req.dates.filter(d => new Date(d).getFullYear() === planningYear).length;
-                                                                if (daysInYear === 0) return null;
-
-                                                                const startStr = req.startDate || (req.dates && req.dates[0]) || '';
-                                                                const endStr = req.endDate || (req.dates && req.dates[req.dates.length - 1]) || '';
-                                                                const isPassed = endStr ? new Date(endStr) < new Date() : false;
-
-                                                                return (
-                                                                    <div key={req.id} className="p-4 flex items-center justify-between hover:bg-white transition-colors group">
-                                                                        <div className="flex items-center gap-4">
-                                                                            <div className={clsx("w-2 h-2 rounded-full", isPassed ? "bg-slate-200" : "bg-teal-500 shadow-sm shadow-teal-500/20")}></div>
-                                                                            <div>
-                                                                                <div className={clsx("text-xs font-black uppercase tracking-tight", isPassed ? "text-slate-400" : "text-slate-900")}>
-                                                                                    {startStr ? new Date(startStr).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' }) : '?'}
-                                                                                    {' → '}
-                                                                                    {endStr ? new Date(endStr).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '?'}
-                                                                                </div>
-                                                                                <div className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">{daysInYear} días</div>
-                                                                            </div>
-                                                                        </div>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                setDeletingVacationId(req.id);
-                                                                                setIsConfirmDeleteVacationOpen(true);
-                                                                            }}
-                                                                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                                                                        >
-                                                                            <Trash2 size={16} />
-                                                                        </button>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    );
-                                                })()}
-                                            </div>
-                                        </div>
-
-                                        {/* Staged Ranges */}
-                                        {vacationRanges.length > 0 && (
-                                            <div className="space-y-4">
-                                                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em]">Nuevos Periodos</p>
-                                                <div className="bg-indigo-50 rounded-[2rem] border border-indigo-100 overflow-hidden divide-y divide-indigo-100">
-                                                    {vacationRanges.map((range, idx) => (
-                                                        <div key={idx} className="p-4 flex justify-between items-center">
-                                                            <div>
-                                                                <p className="text-xs font-black text-slate-900 uppercase tracking-tight">
-                                                                    {new Date(range.start).toLocaleDateString()} → {new Date(range.end).toLocaleDateString()}
-                                                                </p>
-                                                                <p className="text-[10px] text-indigo-600 font-bold uppercase">
-                                                                    {Math.ceil((new Date(range.end).getTime() - new Date(range.start).getTime()) / (1000 * 60 * 60 * 24)) + 1} días
-                                                                </p>
-                                                            </div>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => removeRange(idx)}
-                                                                className="p-2 text-indigo-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                                                            >
-                                                                <X size={16} />
-                                                            </button>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 space-y-6">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Añadir Periodo</p>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <DatePicker variant="light"
-                                                    label="Desde"
-                                                    value={vacStartDate}
-                                                    onChange={setVacStartDate}
-                                                />
-                                                <DatePicker variant="light"
-                                                    label="Hasta"
-                                                    value={vacEndDate}
-                                                    onChange={setVacEndDate}
-                                                    min={vacStartDate}
-                                                />
-                                            </div>
-                                            <button
-                                                type="button"
-                                                onClick={addRange}
-                                                disabled={!vacStartDate || !vacEndDate}
-                                                className="w-full py-4 bg-white border border-slate-200 text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 disabled:opacity-30 flex items-center justify-center gap-3 transition-all active:scale-95"
-                                            >
-                                                <Plus size={16} /> Añadir a la Lista
-                                            </button>
-                                        </div>
-
-                                        <div className="pt-4 sticky bottom-0 bg-white py-4 border-t border-slate-100 mt-auto">
-                                            <button
-                                                type="submit"
-                                                disabled={vacationRanges.length === 0}
-                                                className="w-full py-4 bg-teal-600 text-white font-black text-xs uppercase tracking-widest hover:bg-teal-700 rounded-2xl shadow-lg shadow-teal-600/20 active:scale-95 transition-all disabled:opacity-30"
-                                            >
-                                                Guardar Planificación
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
-                            </form>
-                        </div>
-                    </div>
-                )
-            }
-            {
-                isTempHoursModalOpen && (
-                    <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-md p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-                            <div className="flex justify-between items-center mb-8">
-                                <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
-                                    <TrendingUp className="text-orange-500" /> Ampliación
-                                </h2>
-                                <button onClick={() => setIsTempHoursModalOpen(false)} className="text-slate-500 hover:text-slate-900 transition-colors bg-slate-50 p-2 rounded-xl border border-slate-100">
-                                    <X size={20} />
-                                </button>
-                            </div>
-
-                            <form onSubmit={(e) => {
-                                e.preventDefault();
-                                if (!tempEmpId || !tempStart || !tempEnd) {
-                                    showToast('Completa todos los campos', 'error');
-                                    return;
-                                }
-
-                                if (editingTempHoursId) {
-                                    removeTempHours(editingTempHoursId.empId, editingTempHoursId.adjId);
-                                }
-
-                                addTempHours(tempEmpId, {
-                                    hours: tempHoursVal,
-                                    start: tempStart,
-                                    end: tempEnd
-                                });
-                                showToast(editingTempHoursId ? 'Ampliación editada' : 'Horas ampliadas correctamente', 'success');
-                                setIsTempHoursModalOpen(false);
-                                setEditingTempHoursId(null);
-                            }} className="space-y-6">
-                                <div>
-                                    <label className="premium-label-light">Empleado</label>
-                                    <select
-                                        className="premium-select-light w-full"
-                                        onChange={(e) => {
-                                            setTempEmpId(e.target.value);
-                                            const selectedEmp = employees.find(emp => emp.id === e.target.value);
-                                            if (selectedEmp) {
-                                                setTempHoursVal(Math.min(40, selectedEmp.weeklyHours + 4));
-                                            }
-                                        }}
-                                        value={tempEmpId}
-                                        required
-                                    >
-                                        <option value="" className="bg-white text-slate-900">-- Seleccionar --</option>
-                                        {filteredEmployees
-                                            .filter(e => e.weeklyHours < 40)
-                                            .map(e => (
-                                                <option key={e.id} value={e.id} className="bg-white text-slate-900">{e.name} ({e.weeklyHours}h)</option>
-                                            ))}
-                                    </select>
-                                </div>
-
-                                {tempEmpId && (
-                                    <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl">
-                                        <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-1">Estado Actual</p>
-                                        <p className="text-sm font-bold text-slate-900 mb-0.5">{employees.find(e => e.id === tempEmpId)?.name}</p>
-                                        <p className="text-xs text-slate-500 font-bold">Base: {employees.find(e => e.id === tempEmpId)?.weeklyHours}h / semana</p>
-                                    </div>
-                                )}
-
-                                <div>
-                                    <label className="premium-label-light">Nuevas Horas Semanales (Total)</label>
-                                    <select
-                                        value={tempHoursVal}
-                                        onChange={e => setTempHoursVal(Number(e.target.value))}
-                                        className="premium-select-light w-full"
-                                    >
-                                        {(() => {
-                                            const emp = employees.find(e => e.id === tempEmpId);
-                                            const standardHours = [16, 20, 24, 28, 30, 32, 36, 40];
-                                            const currentBase = emp ? emp.weeklyHours : 0;
-                                            return standardHours
-                                                .filter(h => h > currentBase)
-                                                .map(h => (
-                                                    <option key={h} value={h} className="bg-white text-slate-900">{h} Horas</option>
-                                                ));
-                                        })()}
-                                    </select>
-                                    <p className="text-[10px] text-slate-400 mt-2 font-bold uppercase tracking-widest pl-1">Máximo: 40 horas semanales</p>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <DatePicker variant="light"
-                                        label="Desde"
-                                        value={tempStart}
-                                        onChange={setTempStart}
-                                        required
-                                    />
-                                    <DatePicker variant="light"
-                                        label="Hasta"
-                                        value={tempEnd}
-                                        onChange={setTempEnd}
-                                        required
-                                        min={tempStart}
-                                    />
-                                </div>
-
-                                <div className="flex gap-4 pt-4">
-                                    <button type="button" onClick={() => setIsTempHoursModalOpen(false)} className="flex-1 px-4 py-3.5 text-slate-500 font-black text-xs uppercase tracking-widest hover:bg-slate-50 rounded-2xl transition-all">Cancelar</button>
-                                    <button type="submit" className="flex-1 px-4 py-3.5 bg-orange-600 text-white font-black text-xs uppercase tracking-widest hover:bg-orange-700 rounded-2xl shadow-lg shadow-orange-600/20 active:scale-95 transition-all">
-                                        Guardar
-                                    </button>
-                                </div>
-
-                                {tempEmpId && (
-                                    <div className="pt-6 border-t border-slate-100">
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Ampliaciones Activas</p>
-                                        <div className="space-y-3 max-h-40 overflow-y-auto custom-scrollbar pr-2">
-                                            {(() => {
-                                                const emp = employees.find(e => e.id === tempEmpId);
-                                                if (!emp || !emp.tempHours || emp.tempHours.length === 0) {
-                                                    return <p className="text-xs text-slate-400 italic py-4 text-center">No hay ampliaciones registradas.</p>;
-                                                }
-                                                return emp.tempHours.map(h => (
-                                                    <div key={h.id} className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100 group/item hover:border-orange-200 transition-all">
-                                                        <div className="text-xs">
-                                                            <span className="font-black text-slate-900 block mb-0.5">{h.hours}h Semanales</span>
-                                                            <span className="text-slate-400 font-bold uppercase tracking-tighter">{new Date(h.start).toLocaleDateString()} - {new Date(h.end).toLocaleDateString()}</span>
-                                                        </div>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setDeletingTempId({ empId: tempEmpId, adjId: h.id });
-                                                                setIsConfirmDeleteTempOpen(true);
-                                                            }}
-                                                            className="text-slate-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-xl transition-all"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    </div>
-                                                ));
-                                            })()}
-                                        </div>
-                                    </div>
-                                )}
-                            </form>
-                        </div>
-                    </div>
-                )
-            }
+            <TempHoursModal
+                isOpen={isTempHoursModalOpen}
+                onClose={() => {
+                    setIsTempHoursModalOpen(false);
+                    setEditingTempHoursId(null);
+                    setTempEmpId('');
+                }}
+                preSelectedEmployeeId={tempEmpId}
+                editData={editingTempHoursId}
+            />
 
             {/* Legacy Delete Modals Removed - Replaced with ConfirmDialogs below */}
             {/* ... */}
@@ -1969,26 +1144,7 @@ const EmployeesPage: React.FC = () => {
                 isDestructive={true}
             />
 
-            <ConfirmDialog
-                isOpen={isConfirmDeleteVacationOpen}
-                title="Eliminar Vacaciones"
-                message="¿Estás seguro de que quieres eliminar este periodo de vacaciones?"
-                confirmText="Eliminar"
-                cancelText="Cancelar"
-                onConfirm={() => {
-                    if (deletingVacationId) {
-                        removeTimeOff(deletingVacationId);
-                        showToast('Vacaciones eliminadas', 'info');
-                        setDeletingVacationId(null);
-                    }
-                    setIsConfirmDeleteVacationOpen(false);
-                }}
-                onCancel={() => {
-                    setIsConfirmDeleteVacationOpen(false);
-                    setDeletingVacationId(null);
-                }}
-                isDestructive={true}
-            />
+
 
             {/* Sick Leave History Modal (Global) */}
             {
@@ -2126,26 +1282,7 @@ const EmployeesPage: React.FC = () => {
                 isDestructive={true}
             />
 
-            <ConfirmDialog
-                isOpen={isConfirmDeleteVacationOpen}
-                title="Eliminar Vacaciones"
-                message="¿Estás seguro de que quieres eliminar este periodo de vacaciones?"
-                confirmText="Eliminar"
-                cancelText="Cancelar"
-                onConfirm={() => {
-                    if (deletingVacationId) {
-                        removeTimeOff(deletingVacationId);
-                        showToast('Vacaciones eliminadas', 'info');
-                        setDeletingVacationId(null);
-                    }
-                    setIsConfirmDeleteVacationOpen(false);
-                }}
-                onCancel={() => {
-                    setIsConfirmDeleteVacationOpen(false);
-                    setDeletingVacationId(null);
-                }}
-                isDestructive={true}
-            />
+
 
             <ConfirmDialog
                 isOpen={isConfirmDeleteTempOpen}
@@ -2199,6 +1336,16 @@ const EmployeesPage: React.FC = () => {
                             <h2 className="text-2xl font-black text-slate-900 mb-4 tracking-tight">Dar de Baja</h2>
                             <p className="text-slate-500 text-sm mb-8 font-medium">Indica el motivo de la baja para el historial del empleado.</p>
                             <form onSubmit={handleConfirmDeactivate} className="space-y-6">
+                                <div>
+                                    <label className="premium-label-light">Fecha de Fin de Contrato</label>
+                                    <DatePicker
+                                        required
+                                        value={deactivationDate}
+                                        onChange={setDeactivationDate}
+                                        variant="light"
+                                    />
+                                    <p className="text-xs text-slate-400 mt-1 pl-1">Esta fecha figurará como el fin oficial del contrato.</p>
+                                </div>
                                 <div>
                                     <label className="premium-label-light">Motivo de la Baja</label>
                                     <textarea
@@ -2364,8 +1511,16 @@ const EmployeesPage: React.FC = () => {
                                                         entry.type === 'terminated' ? 'Baja Laboral' : 'Reincorporación'}
                                                 </p>
                                                 {entry.reason && (
-                                                    <div className="text-[11px] text-slate-600 font-medium leading-relaxed bg-white p-3 rounded-xl border border-slate-100">
+                                                    <div className="text-[11px] text-slate-600 font-medium leading-relaxed bg-white p-3 rounded-xl border border-slate-100 mb-2">
                                                         {entry.reason}
+                                                    </div>
+                                                )}
+                                                {entry.contractEndDate && (
+                                                    <div className="flex items-center gap-2 mt-2 bg-slate-100/50 p-2 rounded-lg border border-slate-100">
+                                                        <CalendarClock size={14} className="text-slate-400" />
+                                                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                                            Fin Contrato: <span className="text-slate-700">{new Date(entry.contractEndDate).toLocaleDateString()}</span>
+                                                        </span>
                                                     </div>
                                                 )}
                                             </div>
@@ -2399,13 +1554,14 @@ const EmployeesPage: React.FC = () => {
                                             <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100">Fecha y Hora</th>
                                             <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100">Empleado</th>
                                             <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 text-center">Movimiento</th>
+                                            <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 border-r border-slate-100">Contrato</th>
                                             <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100">Observaciones</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                         {getFullStoreHistory().length === 0 ? (
                                             <tr>
-                                                <td colSpan={4} className="p-20 text-center">
+                                                <td colSpan={5} className="p-20 text-center">
                                                     <div className="flex flex-col items-center gap-4 text-slate-300">
                                                         <Activity size={40} className="opacity-20" />
                                                         <p className="font-bold text-sm uppercase tracking-widest">No hay registros históricos disponibles</p>
@@ -2442,6 +1598,24 @@ const EmployeesPage: React.FC = () => {
                                                                 entry.type === 'terminated' ? 'Baja' : 'Reincorporación'}
                                                         </span>
                                                     </td>
+                                                    <td className="p-5 border-r border-slate-50">
+                                                        <div className="flex flex-col gap-1 items-center">
+                                                            {entry.contractStartDate && (
+                                                                <div className="text-[10px] text-slate-500 font-medium">
+                                                                    <span className="font-bold text-slate-400 uppercase tracking-wider mr-1">Inicio:</span>
+                                                                    <span className="text-slate-700 font-bold">{new Date(entry.contractStartDate).toLocaleDateString()}</span>
+                                                                </div>
+                                                            )}
+                                                            {entry.contractEndDate ? (
+                                                                <div className="text-[10px] text-slate-500 font-medium">
+                                                                    <span className="font-bold text-slate-400 uppercase tracking-wider mr-1">Fin:</span>
+                                                                    <span className="text-slate-700 font-bold">{new Date(entry.contractEndDate).toLocaleDateString()}</span>
+                                                                </div>
+                                                            ) : (
+                                                                !entry.contractStartDate && <div className="text-center text-slate-300 text-[10px] font-bold">-</div>
+                                                            )}
+                                                        </div>
+                                                    </td>
                                                     <td className="p-5">
                                                         <p className="text-xs text-slate-600 font-medium line-clamp-2 max-w-xs">{entry.reason || '-'}</p>
                                                     </td>
@@ -2455,6 +1629,11 @@ const EmployeesPage: React.FC = () => {
                     </div>
                 )
             }
+            {/* Other Modals as needed */}
+            <ILTReportModal
+                isOpen={isILTModalOpen}
+                onClose={() => setIsILTModalOpen(false)}
+            />
         </div>
     );
 };

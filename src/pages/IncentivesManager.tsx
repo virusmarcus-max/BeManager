@@ -4,8 +4,9 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import {
     Coins, Plus, Minus, Send, FileText, AlertCircle, Save,
-    Store, ChevronDown, ChevronLeft, ChevronRight, X,
-    TrendingUp, Wallet, ArrowUpRight, Sparkles, Trophy, Award
+    Store,
+    X, Award,
+    ChevronLeft, ChevronRight, Wallet, Trophy, ArrowUpRight, Sparkles
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { IncentiveReport, IncentiveAdjustment, IncentiveItem } from '../types';
@@ -65,7 +66,7 @@ const IncentivesManager = () => {
     // Let's use local state initialized from globalReport.
 
     const [report, setReport] = useState<IncentiveReport | null>(null);
-    const [isDirty, setIsDirty] = useState(false);
+    const [_isDirty, setIsDirty] = useState(false);
 
     // Initialize/Sync Report
     useEffect(() => {
@@ -83,7 +84,6 @@ const IncentivesManager = () => {
 
                 if (currentMonthStr === nowStr) {
                     const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-                    const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
 
                     const storeEmployees = employees.filter(e => {
                         if (e.establishmentId !== user.establishmentId) return false;

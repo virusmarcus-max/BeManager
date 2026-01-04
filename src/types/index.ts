@@ -1,3 +1,4 @@
+export * from './ilt';
 export type UserRole = 'manager';
 
 export interface User {
@@ -22,7 +23,8 @@ export interface Employee {
     email?: string;
     hoursDebt: number; // Positive = Employee worked extra, Negative = Employee owes hours
     contractEndDate?: string; // ISO Date YYYY-MM-DD
-    contractType?: 'indefinido' | 'temporal';
+    contractStartDate?: string; // ISO Date YYYY-MM-DD - The actual start date of the current contract
+    contractType?: 'indefinido' | 'temporal' | 'sustitucion';
     initials?: string;
     tempHours?: TemporaryHoursAdjustment[];
     history?: EmployeeHistoryEntry[];
@@ -33,6 +35,8 @@ export interface EmployeeHistoryEntry {
     date: string; // ISO Timestamp
     type: 'hired' | 'terminated' | 'rehired';
     reason?: string;
+    contractEndDate?: string;
+    contractStartDate?: string;
 }
 
 export interface TemporaryHoursAdjustment {
@@ -97,6 +101,8 @@ export interface Shift {
     afternoonStartTime?: string; // "16:30"
     role?: WorkRole;
     isIndividualMeeting?: boolean;
+    isOpening?: boolean;
+    isClosing?: boolean;
 }
 
 export interface WeeklySchedule {
@@ -142,7 +148,7 @@ export interface EmployeeLog {
     establishmentId: string;
 }
 
-export type PermanentRequestType = 'morning_only' | 'afternoon_only' | 'specific_days_off' | 'max_afternoons_per_week' | 'force_full_days' | 'early_morning_shift' | 'rotating_days_off' | 'fixed_rotating_shift';
+export type PermanentRequestType = 'morning_only' | 'afternoon_only' | 'specific_days_off' | 'max_afternoons_per_week' | 'force_full_days' | 'early_morning_shift' | 'rotating_days_off' | 'fixed_rotating_shift' | 'no_split' | 'custom_days_off';
 
 export interface PermanentRequest {
     id: string;

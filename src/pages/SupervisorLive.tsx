@@ -9,9 +9,11 @@ import {
     CheckCircle,
     Activity,
     Store,
+    ChevronLeft,
+    ChevronRight,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { formatLocalDate } from '../services/dateUtils';
+import { formatLocalDate, parseLocalDate } from '../services/dateUtils';
 import { DEFAULT_STORE_NAMES } from '../services/storeConfig';
 import type { Shift, Employee } from '../types';
 
@@ -49,8 +51,29 @@ interface AbsentEmployee extends Employee {
     storeName: string;
 }
 
+// Helper components & functions
+const StoreIcon = () => (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-current">
+        <path d="M3 21H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M5 21V7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M19 21V7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M2 7L22 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M12 7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+);
+
+const getStatusStyle = (reason: string) => {
+    switch (reason) {
+        case 'Vacaciones': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+        case 'Baja Médica': return 'bg-red-500/10 text-red-400 border-red-500/20';
+        case 'Maternidad/Paternidad': return 'bg-pink-500/10 text-pink-400 border-pink-500/20';
+        default: return 'bg-slate-800 text-slate-400 border-slate-700'; // Descanso
+    }
+};
+
 const SupervisorLive: React.FC = () => {
-    const { schedules, employees, settings } = useStore();
+    const { schedules = [], employees = [], settings = [], timeOffRequests = [] } = useStore();
+    console.log('Rendering SupervisorLive', { schedules, employees, settings, timeOffRequests });
     const [currentTime, setCurrentTime] = useState(new Date());
     const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
 
@@ -64,13 +87,19 @@ const SupervisorLive: React.FC = () => {
     const today = new Date();
     const todayStr = formatLocalDate(today);
     const currentWeekStart = formatLocalDate(getMonday(today));
+    const [selectedWeek, setSelectedWeek] = React.useState(currentWeekStart);
 
-    // 2. Filter Data
-    // Get schedules for the current week for ALL stores
-    const activeSchedules = schedules.filter(s => s.weekStartDate === currentWeekStart);
+    const handlePrevWeek = () => {
+        const d = parseLocalDate(selectedWeek);
+        d.setDate(d.getDate() - 7);
+        setSelectedWeek(formatLocalDate(d));
+    };
 
-    // Get unique active stores from these schedules (or settings)
-    const activeStoreIds = Array.from(new Set(activeSchedules.map(s => s.establishmentId)));
+    const handleNextWeek = () => {
+        const d = parseLocalDate(selectedWeek);
+        d.setDate(d.getDate() + 7);
+        setSelectedWeek(formatLocalDate(d));
+    };
 
     // Helper to get initials
     const getInitials = (emp: Employee) => {
@@ -85,6 +114,105 @@ const SupervisorLive: React.FC = () => {
 
         return DEFAULT_STORE_NAMES[id] || `Tienda ${id}`;
     };
+
+    // Helper for shift hour calculation (from SupervisorDashboard)
+    const getShiftHours = (shift: any, storeId: string) => {
+        if (!shift || ['off', 'vacation', 'sick_leave', 'maternity_paternity', 'holiday'].includes(shift.type)) return 0;
+        const storeSettings = settings.find(s => s.establishmentId === storeId);
+        const oh = storeSettings?.openingHours;
+        const parseTime = (t: string | undefined, fallback: string) => {
+            const timeStr = (t && t.includes(':')) ? t : fallback;
+            const [h, m] = timeStr.split(':').map(Number);
+            return h + m / 60;
+        };
+        const start = parseTime(shift.startTime || (shift.type === 'morning' ? oh?.morningStart : oh?.afternoonStart), '00:00');
+        const end = parseTime(shift.endTime || (shift.type === 'morning' ? oh?.morningEnd : oh?.afternoonEnd), '00:00');
+        let hours = end - start;
+        if (shift.type === 'split') {
+            const mStart = parseTime(shift.startTime || oh?.morningStart, '10:00');
+            const mEnd = parseTime(shift.morningEndTime || oh?.morningEnd, '14:00');
+            const aStart = parseTime(shift.afternoonStartTime || oh?.afternoonStart, '16:30');
+            const aEnd = parseTime(shift.endTime || oh?.afternoonEnd, '20:30');
+            hours = (mEnd - mStart) + (aEnd - aStart);
+        }
+        return Math.max(0, hours);
+    };
+
+    // --- COMPARISON TABLE LOGIC ---
+    const storeIds = Array.from(new Set(employees.map(e => e.establishmentId)));
+    const storeStats = storeIds.map(id => {
+        const storeEmps = employees.filter(e => e.establishmentId === id && e.active);
+        const storeSchedule = schedules.find(s => s.establishmentId === id && s.weekStartDate === selectedWeek);
+
+        let weeklyContractedTotal = 0;
+        let plannedHours = 0;
+        let vacationHoursSum = 0;
+
+        const weekDates = Array.from({ length: 7 }, (_, i) => {
+            const d = parseLocalDate(selectedWeek);
+            d.setDate(d.getDate() + i);
+            return formatLocalDate(d);
+        });
+
+        // Loop employees to sum contracted, debt
+        const empDetails = storeEmps.map(emp => {
+            let contracted = emp.weeklyHours;
+            const adj = emp.tempHours?.find(t => selectedWeek >= t.start && selectedWeek <= t.end);
+            if (adj) contracted += adj.hours;
+
+            // Worked hours from schedule
+            const shifts = storeSchedule?.shifts.filter(s => s.employeeId === emp.id) || [];
+            const worked = shifts.reduce((acc, s) => acc + getShiftHours(s, id), 0);
+
+            weeklyContractedTotal += contracted;
+            plannedHours += worked;
+
+            // Vacations this week
+            const empRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.status === 'approved' && r.type === 'vacation');
+            const weekVacationDays = new Set<string>();
+            empRequests.forEach(r => {
+                if (r.dates && Array.isArray(r.dates)) {
+                    r.dates.filter(date => weekDates.includes(date)).forEach(d => weekVacationDays.add(d));
+                }
+            });
+            vacationHoursSum += (emp.weeklyHours / 5) * Math.min(5, weekVacationDays.size);
+
+            // Bajas this week (check if active this week)
+            const isOnLeave = timeOffRequests.some(r =>
+                r.employeeId === emp.id && (r.type === 'sick_leave') && r.status === 'approved' &&
+                r.dates && Array.isArray(r.dates) && r.dates.some(d => weekDates.includes(d))
+            );
+
+            return { id: emp.id, isOnLeave };
+        });
+
+        const debt = storeEmps.reduce((acc, e) => acc + (e.hoursDebt || 0), 0);
+        const coveragePercent = weeklyContractedTotal > 0 ? (plannedHours / weeklyContractedTotal) * 100 : 0;
+        const bajasCount = empDetails.filter(e => e.isOnLeave).length;
+        const status = !storeSchedule ? 'no_generated' : storeSchedule.status === 'published' ? (storeSchedule.approvalStatus || 'pending') : 'draft';
+
+        return {
+            id,
+            name: getStoreName(id),
+            employeeCount: storeEmps.length,
+            debt,
+            coveragePercent,
+            plannedHours,
+            weeklyContractedTotal,
+            vacationHoursSum,
+            bajasCount,
+            status
+        };
+    });
+
+    // 2. Filter Data
+    // Get schedules for the current week for ALL stores
+    const activeSchedules = schedules.filter(s => s.weekStartDate === currentWeekStart);
+
+    // Get unique active stores from these schedules (or settings)
+    const activeStoreIds = Array.from(new Set(activeSchedules.map(s => s.establishmentId)));
+
+
 
     // 3. Process "Working Today"
     const workingToday: WorkingEmployee[] = [];
@@ -341,6 +469,94 @@ const SupervisorLive: React.FC = () => {
                             </div>
                         ))}
 
+                        {/* Summarized Comparison Table Section */}
+                        <div className="bg-slate-900/40 border border-slate-800/50 rounded-[3rem] p-6 backdrop-blur-sm print:hidden">
+                            <div className="flex justify-between items-center mb-6">
+                                <h3 className="text-lg font-black text-white flex items-center gap-3">
+                                    <Store size={20} className="text-indigo-400" /> Comparativa Semanal
+                                </h3>
+                                <div className="flex items-center gap-2 bg-slate-950/50 p-1 rounded-xl border border-slate-800">
+                                    <button onClick={handlePrevWeek} className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                        <ChevronLeft size={14} />
+                                    </button>
+                                    <div className="px-2">
+                                        <span className="text-xs font-bold text-white block text-center">{selectedWeek}</span>
+                                    </div>
+                                    <button onClick={handleNextWeek} className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                        <ChevronRight size={14} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr className="border-b border-slate-800/50 text-[10px] uppercase tracking-widest text-slate-500 font-black">
+                                            <th className="py-3 px-4">Establecimiento</th>
+                                            <th className="py-3 px-2 text-center">Estado</th>
+                                            <th className="py-3 px-2 text-center">Plantilla</th>
+                                            <th className="py-3 px-2 text-center">Cobertura</th>
+                                            <th className="py-3 px-2 text-center">Bolsa Horas</th>
+                                            <th className="py-3 px-4 text-right"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="text-sm font-bold divide-y divide-slate-800/30">
+                                        {storeStats.map(store => (
+                                            <tr key={store.id} className="hover:bg-indigo-500/5 transition-colors group">
+                                                <td className="py-3 px-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-black text-xs uppercase">
+                                                            {store.name.substring(0, 2)}
+                                                        </div>
+                                                        <span className="text-slate-200 text-xs">{store.name}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="py-3 px-2 text-center">
+                                                    <span className={clsx(
+                                                        "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider",
+                                                        store.status === 'approved' ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                                                            store.status === 'pending' ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+                                                                "bg-slate-700/50 text-slate-400 border border-slate-700"
+                                                    )}>
+                                                        {store.status === 'approved' ? 'OK' :
+                                                            store.status === 'pending' ? 'Pend' :
+                                                                store.status === 'no_generated' ? '-' : 'Borr'}
+                                                    </span>
+                                                </td>
+                                                <td className="py-3 px-2 text-center text-slate-400 text-xs">{store.employeeCount}</td>
+                                                <td className="py-3 px-2 text-center">
+                                                    <div className="flex flex-col items-center">
+                                                        <span className={clsx(
+                                                            "text-[10px] font-black",
+                                                            store.coveragePercent >= 95 ? "text-emerald-400" : "text-amber-400"
+                                                        )}>{store.coveragePercent.toFixed(0)}%</span>
+                                                        <div className="w-12 h-1 bg-slate-800 rounded-full mt-0.5 overflow-hidden">
+                                                            <div
+                                                                className={clsx("h-full rounded-full", store.coveragePercent >= 95 ? "bg-emerald-500" : "bg-amber-500")}
+                                                                style={{ width: `${Math.min(store.coveragePercent, 100)}%` }}
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="py-3 px-2 text-center">
+                                                    <span className={clsx(
+                                                        "text-xs",
+                                                        store.debt > 0 ? "text-emerald-400" :
+                                                            store.debt < 0 ? "text-rose-400" : "text-slate-500"
+                                                    )}>{store.debt.toFixed(0)}h</span>
+                                                </td>
+                                                <td className="py-3 px-4 text-right">
+                                                    <button className="h-6 w-6 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 hover:bg-indigo-500 hover:text-white transition-all">
+                                                        <ChevronRight size={12} />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
                         {workingToday.length === 0 && (
                             <div className="bg-slate-900/40 border border-slate-800/50 rounded-[3rem] p-12 text-center flex flex-col items-center justify-center text-slate-500 backdrop-blur-sm">
                                 <Moon size={64} className="mb-6 text-slate-700" />
@@ -469,28 +685,12 @@ const SupervisorLive: React.FC = () => {
                     </div>
                 </div>
             </div>
+
+
         </div>
     );
 };
 
-// Helper components & functions
-const StoreIcon = () => (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-current">
-        <path d="M3 21H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M5 21V7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M19 21V7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M2 7L22 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M12 7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-);
 
-const getStatusStyle = (reason: string) => {
-    switch (reason) {
-        case 'Vacaciones': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
-        case 'Baja Médica': return 'bg-red-500/10 text-red-400 border-red-500/20';
-        case 'Maternidad/Paternidad': return 'bg-pink-500/10 text-pink-400 border-pink-500/20';
-        default: return 'bg-slate-800 text-slate-400 border-slate-700'; // Descanso
-    }
-};
 
 export default SupervisorLive;

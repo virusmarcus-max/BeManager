@@ -4,9 +4,9 @@ import { useStore } from '../context/StoreContext';
 import { useToast } from '../context/ToastContext';
 import {
     Users, Calendar, Clock, AlertTriangle, Check, X, Bell, TrendingUp,
-    ArrowUpRight, Activity, Search, ChevronRight,
+    ArrowUpRight, Activity, Search, ChevronRight, ChevronLeft,
     Coins, FileText, UserX, AlertCircle, LayoutGrid, LayoutList,
-    Zap, UserCheck, CheckSquare, Plane
+    Zap, UserCheck, CheckSquare, Plane, Trophy, Star
 } from 'lucide-react';
 import { FilterSelect } from '../components/FilterSelect';
 import AnnualPlanModal from '../components/AnnualPlanModal';
@@ -24,7 +24,7 @@ const DashboardPage: React.FC = () => {
     const {
         employees, schedules, timeOffRequests, updateHoursDebt, getSettings,
         hoursDebtLogs, notifications, removeNotification, tasks, updateTaskStatus,
-        incentiveReports, updateIncentiveReport, employeeLogs
+        incentiveReports, updateIncentiveReport, employeeLogs, getManagerNames, iltReports
     } = useStore();
     const { showToast } = useToast();
 
@@ -289,8 +289,8 @@ const DashboardPage: React.FC = () => {
     }, [currentSchedule, myEmployees, currentWeekStart]);
 
     const currentActiveAbsences = useMemo(() => {
-        const todayStr = new Date().toISOString().split('T')[0];
         const weekStart = new Date(currentWeekStart);
+        const weekStartStr = weekStart.toISOString().split('T')[0];
         const weekEnd = new Date(weekStart);
         weekEnd.setDate(weekEnd.getDate() + 6);
         const weekEndStr = weekEnd.toISOString().split('T')[0];
@@ -298,9 +298,17 @@ const DashboardPage: React.FC = () => {
         return timeOffRequests.filter(r => {
             if (r.type !== 'sick_leave' && r.type !== 'maternity_paternity' && r.type !== 'vacation') return false;
             if (r.status !== 'approved') return false;
+
+            // 1. Filter by Store: Ensure employee belongs to this store
+            const emp = myEmployees.find(e => e.id === r.employeeId);
+            if (!emp) return false;
+
+            // 2. Filter by Date: Check intersection with current week
             const start = r.startDate || r.dates[0];
-            const end = r.endDate || r.dates[r.dates.length - 1];
-            return start && todayStr >= start && (!end || todayStr <= end);
+            const end = r.endDate || (r.dates ? r.dates[r.dates.length - 1] : start);
+
+            // Intersection: (StartA <= EndB) and (EndA >= StartB)
+            return start <= weekEndStr && end >= weekStartStr;
         }).map(r => {
             const emp = myEmployees.find(e => e.id === r.employeeId);
             let typeLabel = 'BAJA MÉDICA';
@@ -388,9 +396,80 @@ const DashboardPage: React.FC = () => {
         return Object.entries(years)
             .sort((a, b) => b[0].localeCompare(a[0]))
             .map(([year, data]) => ({ label: year, worked: data.worked, contracted: data.contracted, coverage: (data.worked / data.contracted) * 100 }));
+
     }, [schedules, totalContractedHours, user.establishmentId]);
 
+    const microloansData = useMemo(() => {
+        const currentMonthStr = new Date().toISOString().substring(0, 7);
+        // Get current report
+        const currentReport = incentiveReports.find(r => r.establishmentId === user.establishmentId && r.month === currentMonthStr);
+
+        const totalThisMonth = (currentReport?.items || []).reduce((acc, item) => acc + (item.micros_aptacion_qty || 0), 0);
+
+        // Previous Month Data
+        const dPrev = new Date();
+        dPrev.setMonth(dPrev.getMonth() - 1);
+        const prevMonthStr = `${dPrev.getFullYear()}-${String(dPrev.getMonth() + 1).padStart(2, '0')}`;
+        const prevReport = incentiveReports.find(r => r.establishmentId === user.establishmentId && r.month === prevMonthStr);
+
+        const prevMonthEmployeePerformance = (prevReport?.items || [])
+            .map(item => ({
+                name: item.employeeName,
+                count: item.micros_aptacion_qty || 0
+            }))
+            .filter(item => item.count > 0)
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5);
+
+        const totalPrevMonth = (prevReport?.items || []).reduce((acc, item) => acc + (item.micros_aptacion_qty || 0), 0);
+        const prevMonthLabel = dPrev.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+
+        // Annual Data (Current Year)
+        const currentYear = new Date().getFullYear();
+        const annualEmployeeCounts: Record<string, { name: string, count: number }> = {};
+
+        incentiveReports
+            .filter(r => r.establishmentId === user.establishmentId && r.month.startsWith(`${currentYear}-`))
+            .forEach(report => {
+                report.items.forEach(item => {
+                    if (!annualEmployeeCounts[item.employeeId]) {
+                        annualEmployeeCounts[item.employeeId] = { name: item.employeeName, count: 0 };
+                    }
+                    annualEmployeeCounts[item.employeeId].count += (item.micros_aptacion_qty || 0);
+                });
+            });
+
+        const annualRanking = Object.values(annualEmployeeCounts)
+            .filter(item => item.count > 0)
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 10);
+
+        // Historical data (Last 6 months)
+        const history = [];
+        for (let i = 0; i < 6; i++) {
+            const d = new Date();
+            d.setMonth(d.getMonth() - i);
+            const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            const rep = incentiveReports.find(r => r.establishmentId === user.establishmentId && r.month === mStr);
+            const total = (rep?.items || []).reduce((acc, item) => acc + (item.micros_aptacion_qty || 0), 0);
+            history.push({ month: mStr, total, label: d.toLocaleDateString('es-ES', { month: 'short' }) });
+        }
+
+        return {
+            totalThisMonth,
+            history: history.reverse(),
+            prevMonthData: {
+                label: prevMonthLabel,
+                total: totalPrevMonth,
+                ranking: prevMonthEmployeePerformance
+            },
+            annualRanking
+        };
+    }, [incentiveReports, user.establishmentId]);
+
     const [dashboardYear, setDashboardYear] = useState(new Date().getFullYear());
+    const [saturdaysYear, setSaturdaysYear] = useState(new Date().getFullYear());
+    const [vacationYear, setVacationYear] = useState(new Date().getFullYear());
 
     const vacationDaysPerEmployee = myEmployees.map(emp => {
         const empVacationDates = timeOffRequests
@@ -398,7 +477,7 @@ const DashboardPage: React.FC = () => {
             .flatMap(r => r.dates)
             .filter(d => {
                 const targetDate = new Date(d);
-                if (targetDate.getFullYear() !== dashboardYear) return false;
+                if (targetDate.getFullYear() !== vacationYear) return false;
                 const empSickLeaves = timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'sick_leave');
                 const isOverlapped = empSickLeaves.some(sick => {
                     const start = new Date(sick.startDate || sick.dates[0]);
@@ -419,25 +498,7 @@ const DashboardPage: React.FC = () => {
         return { name: emp.name, enjoyed, scheduled, total: enjoyed + scheduled };
     }).sort((a, b) => b.total - a.total);
 
-    const saturdaysOffPerEmployee = myEmployees.map(emp => {
-        const empShifts = schedules
-            .filter(s => s.establishmentId === user.establishmentId)
-            .flatMap(s => s.shifts)
-            .filter(s => s.employeeId === emp.id);
 
-        const saturdaysOff = empShifts.filter(s => {
-            const d = new Date(s.date);
-            return d.getFullYear() === dashboardYear && d.getDay() === 6 && s.type === 'off';
-        });
-
-        const monthlyCounts = saturdaysOff.reduce((acc, s) => {
-            const monthIndex = new Date(s.date).getMonth();
-            acc[monthIndex] = (acc[monthIndex] || 0) + 1;
-            return acc;
-        }, {} as Record<number, number>);
-
-        return { name: emp.name, total: saturdaysOff.length, monthly: monthlyCounts };
-    }).sort((a, b) => b.total - a.total);
 
     // Alerts Logic
     const activeAlerts = useMemo(() => {
@@ -472,11 +533,7 @@ const DashboardPage: React.FC = () => {
             }
         });
 
-        // Other alert logic truncated for brevity but functionality preserved conceptually
-        // ... (Include remainder of original alert logic blocks for Pending Requests, Unpublished, etc for robustness if needed, 
-        // but for this redesign I will focus on the main ones to ensure the code fits and runs. 
-        // I will re-add the Pending Requests and Unpublished logic as they are critical.)
-
+        // Pending Requests
         const pendingRequestsCount: Record<string, number> = {};
         timeOffRequests.forEach(r => {
             if (r.status === 'pending') pendingRequestsCount[r.employeeId] = (pendingRequestsCount[r.employeeId] || 0) + 1;
@@ -488,10 +545,30 @@ const DashboardPage: React.FC = () => {
             }
         });
 
+        // Unpublished Schedules
         const unpublished = schedules.filter(s => s.establishmentId === user.establishmentId && s.status !== 'published' && s.weekStartDate <= currentWeekStart);
         unpublished.forEach(s => {
             alerts.push({ id: `unpub_${s.id}`, type: 'warning', message: `Pendiente publicar horario (Semana ${new Date(s.weekStartDate).toLocaleDateString()})`, icon: AlertTriangle, isSystem: true });
         });
+
+        // ILT Report Alert (4th-10th)
+        const today = new Date();
+        const dayOfMonth = today.getDate();
+        if (dayOfMonth >= 20 && dayOfMonth <= 30) {
+            const currentMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+            const safeReports = Array.isArray(iltReports) ? iltReports : [];
+            const hasReport = safeReports.some(r => r.establishmentId === user.establishmentId && r.month === currentMonthStr);
+
+            if (!hasReport) {
+                alerts.push({
+                    id: `ilt_report_${currentMonthStr}`,
+                    type: 'warning',
+                    message: `Pendiente Generar Informe ILT de ${today.toLocaleDateString('es-ES', { month: 'long' })}`,
+                    icon: FileText,
+                    isSystem: true
+                });
+            }
+        }
 
         return alerts.filter(a => {
             if (a.isSystem === false) return true;
@@ -500,7 +577,7 @@ const DashboardPage: React.FC = () => {
             if (state && state > Date.now()) return false;
             return true;
         });
-    }, [myEmployees, timeOffRequests, alertState, currentWeekStart, notifications, user.establishmentId]);
+    }, [myEmployees, timeOffRequests, alertState, currentWeekStart, notifications, user.establishmentId, iltReports]);
 
     const pendingTasks = useMemo(() => {
         if (!user?.establishmentId) return [];
@@ -531,7 +608,7 @@ const DashboardPage: React.FC = () => {
                         <span className="text-xs uppercase tracking-widest">{new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
                     </div>
                     <h1 className="text-4xl font-black text-slate-900 tracking-tight leading-tight">
-                        Hola, <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-500">{settings.managerName || user.name}</span>
+                        Hola, <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-500">{getManagerNames(user.establishmentId) || user.name}</span>
                     </h1>
                     <p className="text-slate-500 text-lg mt-2 font-medium max-w-2xl">
                         Aquí tienes el resumen de tu tienda hoy. Tienes <span className="text-indigo-600 font-bold">{pendingTasks.length} tareas</span> pendientes y <span className="text-rose-500 font-bold">{activeAlerts.length} alertas</span> que requieren atención.
@@ -685,7 +762,7 @@ const DashboardPage: React.FC = () => {
                                         <div className="flex items-center gap-2 bg-rose-50 px-3 py-2 rounded-xl border border-rose-100/50 mb-1">
                                             <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></div>
                                             <span className="text-xs font-black text-rose-600 uppercase tracking-widest leading-none">
-                                                {currentActiveAbsences.length} Ausencias Hoy
+                                                {currentActiveAbsences.length} Ausencias Esta Semana
                                             </span>
                                         </div>
                                         <div className="flex flex-col gap-2">
@@ -773,6 +850,138 @@ const DashboardPage: React.FC = () => {
                                 </div>
                             </div>
                         )
+
+                    },
+                    {
+                        id: 'microloans',
+                        label: 'Captación Clientes',
+                        val: `${microloansData.prevMonthData.total}`,
+                        icon: Coins,
+                        color: 'text-sky-600',
+                        bg: 'bg-sky-50',
+                        border: 'border-sky-100/50',
+                        onClick: undefined, // Or open incentives modal?
+                        extra: (
+                            <div className="mt-6 flex-1 h-full min-h-[160px]">
+                                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
+
+                                    {/* 1. MVP Module (Focus on Winner) */}
+                                    <div className="relative bg-gradient-to-br from-indigo-600 via-indigo-500 to-purple-600 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-indigo-200 text-white overflow-hidden group">
+                                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
+                                        <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-500/20 rounded-full blur-xl -ml-10 -mb-10 pointer-events-none"></div>
+
+                                        <div className="relative z-10 flex justify-between items-start">
+                                            <div className="bg-white/20 backdrop-blur-md p-2 rounded-xl border border-white/10">
+                                                <Trophy size={18} className="text-yellow-300 drop-shadow-sm" />
+                                            </div>
+                                            <span className="text-[10px] font-black uppercase tracking-widest bg-white/10 px-2 py-1 rounded-lg border border-white/5">
+                                                {microloansData.prevMonthData.label}
+                                            </span>
+                                        </div>
+
+                                        <div className="relative z-10 mt-2">
+                                            <p className="text-[10px] font-medium text-indigo-100 uppercase tracking-widest mb-1">MVP del Mes</p>
+                                            {microloansData.prevMonthData.ranking.length > 0 ? (
+                                                <div>
+                                                    <p className="text-xl font-black leading-tight mb-0.5 truncate">{microloansData.prevMonthData.ranking[0].name.split(' ')[0]}</p>
+                                                    <div className="flex items-baseline gap-1.5">
+                                                        <span className="text-3xl font-black tracking-tighter text-white">{microloansData.prevMonthData.ranking[0].count}</span>
+                                                        <span className="text-[10px] font-bold text-indigo-200">captaciones</span>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <p className="text-sm italic text-indigo-200/70">Sin rey este mes</p>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* 2. Annual Top 3 (List) */}
+                                    <div className="bg-white rounded-2xl border border-slate-100 p-4 flex flex-col shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+                                        <div className="flex items-center gap-2 mb-3 text-amber-500 relative z-10">
+                                            <Star size={14} className="fill-amber-500" />
+                                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Líderes Anuales</span>
+                                        </div>
+
+                                        <div className="flex-1 flex flex-col gap-2 relative z-10">
+                                            {microloansData.annualRanking.length > 0 ? microloansData.annualRanking.slice(0, 3).map((emp, i) => (
+                                                <div key={i} className="flex items-center justify-between p-1.5 rounded-lg hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className={clsx(
+                                                            "w-5 h-5 rounded-md flex items-center justify-center text-[9px] font-black shadow-sm",
+                                                            i === 0 ? "bg-amber-100 text-amber-700" :
+                                                                i === 1 ? "bg-slate-100 text-slate-600" :
+                                                                    "bg-orange-50 text-orange-600"
+                                                        )}>{i + 1}º</div>
+                                                        <span className="text-xs font-bold text-slate-700 truncate max-w-[80px]">{emp.name.split(' ')[0]}</span>
+                                                    </div>
+                                                    <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded ml-2">{emp.count}</span>
+                                                </div>
+                                            )) : (
+                                                <div className="flex-1 flex items-center justify-center text-slate-300 text-xs italic">
+                                                    Ranking vacío
+                                                </div>
+                                            )}
+                                        </div>
+                                        {/* Bg decoration */}
+                                        <div className="absolute -bottom-6 -right-6 w-24 h-24 bg-amber-50 rounded-full blur-2xl opacity-50 pointer-events-none"></div>
+                                    </div>
+
+                                    {/* 3. Wide Chart (Spans 2 cols) */}
+                                    <div className="lg:col-span-2 bg-slate-50 rounded-2xl p-5 border border-slate-100 flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
+                                        <div className="flex justify-between items-start mb-2 relative z-10">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-2">
+                                                    <TrendingUp size={12} /> Tendencia 6 Meses
+                                                </p>
+                                                <div className="flex items-baseline gap-2">
+                                                    <span className="text-3xl font-black text-slate-800 tracking-tighter">
+                                                        {microloansData.history.reduce((a, b) => a + b.total, 0)}
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-slate-400">total acumulado</span>
+                                                </div>
+                                            </div>
+                                            {/* Visual Indicator */}
+                                            <div className="hidden sm:flex bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm items-center gap-2">
+                                                <div className="flex -space-x-1">
+                                                    <div className="w-2 h-4 rounded-full bg-indigo-200"></div>
+                                                    <div className="w-2 h-4 rounded-full bg-indigo-300"></div>
+                                                    <div className="w-2 h-4 rounded-full bg-indigo-500"></div>
+                                                </div>
+                                                <span className="text-[9px] font-bold text-slate-500">Objetivo</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Bars */}
+                                        <div className="relative z-10 flex items-end justify-between gap-4 h-24 mt-2 px-2">
+                                            {microloansData.history.map((h, i) => {
+                                                const max = Math.max(...microloansData.history.map(x => x.total)) || 1;
+                                                const height = Math.max(15, Math.min(100, (h.total / max) * 100));
+                                                return (
+                                                    <div key={i} className="flex flex-col items-center gap-2 flex-1 group/bar h-full justify-end cursor-default relative">
+                                                        <div className="w-full relative flex items-end justify-center h-full">
+                                                            {/* Pill Bar */}
+                                                            <div className="w-full bg-slate-200/50 rounded-full absolute inset-0 -z-10 group-hover/bar:bg-slate-200 transition-colors"></div>
+                                                            <div
+                                                                className="w-full max-w-[24px] rounded-full bg-gradient-to-t from-indigo-500 to-sky-400 group-hover/bar:from-indigo-600 group-hover/bar:to-purple-500 transition-all duration-300 shadow-sm group-hover/bar:shadow-indigo-200/50"
+                                                                style={{ height: `${height}%` }}
+                                                            ></div>
+
+                                                            {/* Tooltip */}
+                                                            <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-2 py-1 rounded-lg text-[10px] font-bold opacity-0 group-hover/bar:opacity-100 transition-all shadow-xl transform translate-y-2 group-hover/bar:translate-y-0 duration-200 pointer-events-none whitespace-nowrap z-30">
+                                                                {h.total}
+                                                                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"></div>
+                                                            </div>
+                                                        </div>
+                                                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider group-hover/bar:text-indigo-600 transition-colors">{h.label.substring(0, 3)}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        )
                     }
                 ].map((stat, i) => (
                     <div
@@ -781,7 +990,7 @@ const DashboardPage: React.FC = () => {
                         className={clsx(
                             "bg-white p-6 rounded-[2.5rem] border shadow-sm transition-all duration-500 group relative flex flex-col h-[340px] overflow-hidden",
                             stat.border,
-                            stat.id === 'worked' ? "xl:col-span-2" : "xl:col-span-1",
+                            stat.id === 'worked' ? "xl:col-span-2" : stat.id === 'microloans' ? "xl:col-span-5" : "xl:col-span-1",
                             !!stat.onClick && "cursor-pointer hover:shadow-2xl hover:-translate-y-1 active:scale-[0.99]"
                         )}
                     >
@@ -819,51 +1028,53 @@ const DashboardPage: React.FC = () => {
                         </div>
                     </div>
                 ))}
-            </div>
+            </div >
 
             {/* MAIN CONTENT GRID */}
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+            < div className="grid grid-cols-1 xl:grid-cols-12 gap-8" >
 
                 {/* LEFT COL (8) */}
-                <div className="xl:col-span-8 space-y-8">
+                < div className="xl:col-span-7 space-y-8" >
 
                     {/* TASK BANNER */}
-                    {pendingTasks.length > 0 && (
-                        <div className="rounded-[2.5rem] bg-slate-900 overflow-hidden relative shadow-2xl">
-                            <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-indigo-500/20 rounded-full blur-[100px] -mt-20 -mr-20 pointer-events-none"></div>
-                            <div className="relative z-10 p-8 flex flex-col md:flex-row gap-8 items-center justify-between">
-                                <div className="flex gap-6 items-center">
-                                    <div className="h-16 w-16 rounded-2xl bg-indigo-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                                        <CheckSquare size={32} />
+                    {
+                        pendingTasks.length > 0 && (
+                            <div className="rounded-[2.5rem] bg-slate-900 overflow-hidden relative shadow-2xl">
+                                <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-indigo-500/20 rounded-full blur-[100px] -mt-20 -mr-20 pointer-events-none"></div>
+                                <div className="relative z-10 p-8 flex flex-col md:flex-row gap-8 items-center justify-between">
+                                    <div className="flex gap-6 items-center">
+                                        <div className="h-16 w-16 rounded-2xl bg-indigo-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                                            <CheckSquare size={32} />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-2xl font-bold text-white mb-2">Tareas Pendientes</h3>
+                                            <p className="text-slate-400">Tienes {pendingTasks.length} tareas que requieren tu atención inmediata.</p>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <h3 className="text-2xl font-bold text-white mb-2">Tareas Pendientes</h3>
-                                        <p className="text-slate-400">Tienes {pendingTasks.length} tareas que requieren tu atención inmediata.</p>
-                                    </div>
-                                </div>
-                                <div className="flex gap-4 overflow-x-auto max-w-full pb-2 md:pb-0">
-                                    {pendingTasks.slice(0, 3).map(task => {
-                                        const myStatus = task.status[user.establishmentId]?.status || 'pending';
-                                        return (
-                                            <div key={task.id} className="min-w-[220px] bg-white/5 backdrop-blur-md border border-white/10 p-4 rounded-2xl hover:bg-white/10 transition-colors">
-                                                <p className="text-white font-bold text-sm mb-3 truncate">{task.title}</p>
-                                                <div className="flex justify-between items-center">
-                                                    <span className={clsx("text-[10px] font-bold px-2 py-1 rounded-lg uppercase",
-                                                        myStatus === 'pending' ? "bg-amber-500/20 text-amber-300" : "bg-blue-500/20 text-blue-300"
-                                                    )}>{myStatus === 'pending' ? 'Pendiente' : 'En Curso'}</span>
-                                                    {myStatus === 'pending' ? (
-                                                        <button onClick={() => handleQuickTaskUpdate(task.id, 'in_progress')} className="h-8 w-8 rounded-lg bg-white text-slate-900 flex items-center justify-center hover:bg-indigo-500 hover:text-white transition-colors" title="Empezar"><Clock size={16} /></button>
-                                                    ) : (
-                                                        <button onClick={() => handleQuickTaskUpdate(task.id, 'completed')} className="h-8 w-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-400 transition-colors" title="Completar"><Check size={16} /></button>
-                                                    )}
+                                    <div className="flex gap-4 overflow-x-auto max-w-full pb-2 md:pb-0">
+                                        {pendingTasks.slice(0, 3).map(task => {
+                                            const myStatus = task.status[user.establishmentId]?.status || 'pending';
+                                            return (
+                                                <div key={task.id} className="min-w-[220px] bg-white/5 backdrop-blur-md border border-white/10 p-4 rounded-2xl hover:bg-white/10 transition-colors">
+                                                    <p className="text-white font-bold text-sm mb-3 truncate">{task.title}</p>
+                                                    <div className="flex justify-between items-center">
+                                                        <span className={clsx("text-[10px] font-bold px-2 py-1 rounded-lg uppercase",
+                                                            myStatus === 'pending' ? "bg-amber-500/20 text-amber-300" : "bg-blue-500/20 text-blue-300"
+                                                        )}>{myStatus === 'pending' ? 'Pendiente' : 'En Curso'}</span>
+                                                        {myStatus === 'pending' ? (
+                                                            <button onClick={() => handleQuickTaskUpdate(task.id, 'in_progress')} className="h-8 w-8 rounded-lg bg-white text-slate-900 flex items-center justify-center hover:bg-indigo-500 hover:text-white transition-colors" title="Empezar"><Clock size={16} /></button>
+                                                        ) : (
+                                                            <button onClick={() => handleQuickTaskUpdate(task.id, 'completed')} className="h-8 w-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-400 transition-colors" title="Completar"><Check size={16} /></button>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        );
-                                    })}
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    )}
+                        )
+                    }
 
                     {/* CURRENT STATUS & SCHEDULE - REMOVED */}
 
@@ -1061,10 +1272,93 @@ const DashboardPage: React.FC = () => {
                             </div>
                         )}
                     </div>
+
+                    {/* SÁBADOS LIBRES PANEL - Compact Redesign */}
+                    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-5 flex flex-col h-fit">
+                        <div className="flex justify-between items-center mb-4">
+                            <div className="flex items-center gap-2">
+                                <div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600">
+                                    <LayoutGrid size={18} />
+                                </div>
+                                <h3 className="font-bold text-base text-slate-800">Sábados Libres</h3>
+                            </div>
+                            <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-100">
+                                <button onClick={() => setSaturdaysYear(y => y - 1)} className="p-1 hover:bg-white hover:shadow-sm rounded-md transition-all text-slate-400 hover:text-indigo-600">
+                                    <ChevronLeft size={14} />
+                                </button>
+                                <span className="text-[10px] font-black text-slate-600 w-8 text-center">{saturdaysYear}</span>
+                                <button onClick={() => setSaturdaysYear(y => y + 1)} className="p-1 hover:bg-white hover:shadow-sm rounded-md transition-all text-slate-400 hover:text-indigo-600">
+                                    <ChevronRight size={14} />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            {myEmployees.filter(e => e.active).map(emp => {
+                                const monthlyCounts = Array.from({ length: 12 }, (_, monthIndex) => {
+                                    const daysInMonth = new Date(saturdaysYear, monthIndex + 1, 0).getDate();
+                                    let count = 0;
+                                    for (let d = 1; d <= daysInMonth; d++) {
+                                        const date = new Date(saturdaysYear, monthIndex, d);
+                                        if (date.getDay() === 6) {
+                                            const dateStr = date.toISOString().split('T')[0];
+                                            const schedule = schedules.find(s => s.establishmentId === user.establishmentId && s.status === 'published' &&
+                                                dateStr >= s.weekStartDate && dateStr <= new Date(new Date(s.weekStartDate).getTime() + 6 * 86400000).toISOString().split('T')[0]);
+
+                                            if (schedule) {
+                                                const shift = schedule.shifts.find(s => s.employeeId === emp.id && s.date === dateStr);
+                                                const hasWork = shift && (shift.type === 'morning' || shift.type === 'afternoon' || shift.type === 'split');
+
+                                                const isAbsent = timeOffRequests.some(r =>
+                                                    r.employeeId === emp.id && r.status !== 'rejected' &&
+                                                    (r.dates.includes(dateStr) || (r.startDate && r.endDate && dateStr >= r.startDate && dateStr <= r.endDate))
+                                                );
+
+                                                if (!hasWork && !isAbsent) count++;
+                                            }
+                                        }
+                                    }
+                                    return count;
+                                });
+
+                                const totalFreeSaturdays = monthlyCounts.reduce((a, b) => a + b, 0);
+
+                                return (
+                                    <div key={emp.id} className="bg-slate-50/50 rounded-xl p-3 border border-slate-100 hover:border-indigo-100 transition-colors group">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-6 w-6 rounded-md bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-[10px] shadow-sm">
+                                                    {emp.initials}
+                                                </div>
+                                                <span className="text-xs font-bold text-slate-700">{emp.name}</span>
+                                            </div>
+                                            <div className="bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-md text-[10px] font-black min-w-[20px] text-center border border-indigo-100">
+                                                {totalFreeSaturdays}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex gap-0.5 h-1.5 w-full bg-white rounded-full p-px border border-slate-100">
+                                            {monthlyCounts.map((count, i) => (
+                                                <div
+                                                    key={i}
+                                                    className={clsx(
+                                                        "flex-1 rounded-full transition-all duration-300",
+                                                        count > 0 ? "bg-indigo-500 shadow-sm" : "bg-slate-50"
+                                                    )}
+                                                    title={`${new Date(saturdaysYear, i).toLocaleDateString('es-ES', { month: 'long' })}: ${count} sábados libres`}
+                                                ></div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
                 </div>
 
+
                 {/* RIGHT COL (4) */}
-                <div className="xl:col-span-4 space-y-8">
+                <div className="xl:col-span-5 space-y-8">
 
                     {/* SICK LEAVE HISTORY WIDGET */}
                     <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6 flex flex-col h-auto min-h-[400px]">
@@ -1148,13 +1442,25 @@ const DashboardPage: React.FC = () => {
                     <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><Plane className="text-teal-500" /> Vacaciones</h3>
-                            <div className="flex gap-2">
-                                <span className="w-2 h-2 rounded-full bg-teal-500"></span><span className="text-[10px] text-slate-400 font-bold uppercase mr-2">Hecho</span>
-                                <span className="w-2 h-2 rounded-full bg-teal-200"></span><span className="text-[10px] text-slate-400 font-bold uppercase">Prog</span>
+
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-100">
+                                    <button onClick={() => setVacationYear(y => y - 1)} className="p-1 hover:bg-white hover:shadow-sm rounded-lg transition-all text-slate-400 hover:text-indigo-600">
+                                        <ChevronLeft size={16} />
+                                    </button>
+                                    <span className="text-xs font-black text-slate-600 w-10 text-center">{vacationYear}</span>
+                                    <button onClick={() => setVacationYear(y => y + 1)} className="p-1 hover:bg-white hover:shadow-sm rounded-lg transition-all text-slate-400 hover:text-indigo-600">
+                                        <ChevronRight size={16} />
+                                    </button>
+                                </div>
+                                <div className="flex gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-teal-500"></span><span className="text-[10px] text-slate-400 font-bold uppercase mr-2">Hecho</span>
+                                    <span className="w-2 h-2 rounded-full bg-teal-200"></span><span className="text-[10px] text-slate-400 font-bold uppercase">Prog</span>
+                                </div>
                             </div>
                         </div>
-                        <div className="space-y-5">
-                            {vacationDaysPerEmployee.slice(0, 5).map(item => (
+                        <div className="space-y-5 pr-2">
+                            {vacationDaysPerEmployee.map(item => (
                                 <div key={item.name}>
                                     <div className="flex justify-between text-xs mb-1.5 font-bold">
                                         <span className="text-slate-700">{item.name}</span>
@@ -1169,95 +1475,62 @@ const DashboardPage: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* SATURDAYS GRID - Compact */}
-                    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><LayoutGrid className="text-indigo-500" /> Sábados Libres</h3>
-                            <div className="flex items-center gap-2 bg-slate-100 rounded-lg p-1">
-                                <button onClick={() => setDashboardYear(y => y - 1)} className="hover:bg-white rounded px-1 text-slate-500 text-xs font-bold">&lt;</button>
-                                <span className="text-xs font-bold text-slate-700">{dashboardYear}</span>
-                                <button onClick={() => setDashboardYear(y => y + 1)} className="hover:bg-white rounded px-1 text-slate-500 text-xs font-bold">&gt;</button>
-                            </div>
-                        </div>
-                        <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                            {saturdaysOffPerEmployee.map(item => (
-                                <div key={item.name} className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 hover:bg-white hover:shadow-md transition-all border border-transparent hover:border-slate-100">
-                                    <div className="h-8 w-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center font-bold text-xs text-slate-600 shrink-0">
-                                        {item.name.charAt(0)}
-                                    </div>
-                                    <div className="flex-1">
-                                        <div className="flex justify-between mb-1">
-                                            <span className="text-xs font-bold text-slate-700">{item.name}</span>
-                                            <span className="text-[10px] font-black bg-indigo-100 text-indigo-600 px-1.5 rounded">{item.total}</span>
-                                        </div>
-                                        <div className="flex gap-0.5">
-                                            {Array.from({ length: 12 }).map((_, i) => (
-                                                <div key={i} className={clsx("h-1.5 flex-1 rounded-full", item.monthly[i] ? "bg-indigo-500" : "bg-slate-200")}></div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
 
                 </div>
 
-            </div>
-
-            {/* MODALS RETAINED FOR FUNCTIONALITY */}
-            {
-                isDebtHistoryOpen && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
-                        <div className="bg-white rounded-[2rem] w-full max-w-2xl p-8 shadow-2xl relative overflow-hidden">
-                            <div className="flex justify-between items-center mb-8">
-                                <h3 className="text-2xl font-black text-slate-900">Historial de Ajustes</h3>
-                                <button onClick={() => setIsDebtHistoryOpen(false)} className="p-2 hover:bg-slate-100 rounded-full"><X size={24} /></button>
-                            </div>
-                            <div className="flex gap-4 mb-6">
-                                <div className="relative flex-1">
-                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                                    <input type="text" placeholder="Buscar..." value={debtSearchQuery} onChange={e => setDebtSearchQuery(e.target.value)}
-                                        className="w-full bg-slate-50 border-none rounded-xl py-3 pl-12 font-medium focus:ring-2 focus:ring-indigo-100 outline-none"
-                                    />
+                {/* MODALS RETAINED FOR FUNCTIONALITY */}
+                {
+                    isDebtHistoryOpen && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[2rem] w-full max-w-2xl p-8 shadow-2xl relative overflow-hidden">
+                                <div className="flex justify-between items-center mb-8">
+                                    <h3 className="text-2xl font-black text-slate-900">Historial de Ajustes</h3>
+                                    <button onClick={() => setIsDebtHistoryOpen(false)} className="p-2 hover:bg-slate-100 rounded-full"><X size={24} /></button>
                                 </div>
-                                <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1">
-                                    <button onClick={() => setSelectedDebtYear(y => y - 1)} className="p-2 hover:bg-white rounded-lg shadow-sm transition-all text-slate-600"><ChevronRight className="rotate-180" size={16} /></button>
-                                    <span className="text-sm font-black text-slate-800 tabular-nums px-2">{selectedDebtYear}</span>
-                                    <button onClick={() => setSelectedDebtYear(y => y + 1)} className="p-2 hover:bg-white rounded-lg shadow-sm transition-all text-slate-600"><ChevronRight size={16} /></button>
+                                <div className="flex gap-4 mb-6">
+                                    <div className="relative flex-1">
+                                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                                        <input type="text" placeholder="Buscar..." value={debtSearchQuery} onChange={e => setDebtSearchQuery(e.target.value)}
+                                            className="w-full bg-slate-50 border-none rounded-xl py-3 pl-12 font-medium focus:ring-2 focus:ring-indigo-100 outline-none"
+                                        />
+                                    </div>
+                                    <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1">
+                                        <button onClick={() => setSelectedDebtYear(y => y - 1)} className="p-2 hover:bg-white rounded-lg shadow-sm transition-all text-slate-600"><ChevronRight className="rotate-180" size={16} /></button>
+                                        <span className="text-sm font-black text-slate-800 tabular-nums px-2">{selectedDebtYear}</span>
+                                        <button onClick={() => setSelectedDebtYear(y => y + 1)} className="p-2 hover:bg-white rounded-lg shadow-sm transition-all text-slate-600"><ChevronRight size={16} /></button>
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar">
-                                {hoursDebtLogs.filter(l => new Date(l.date).getFullYear() === selectedDebtYear && (!selectedDebtEmp || l.employeeId === selectedDebtEmp) && (!debtSearchQuery || myEmployees.find(e => e.id === l.employeeId)?.name.toLowerCase().includes(debtSearchQuery.toLowerCase()))).length === 0 ? (
-                                    <p className="text-center text-slate-400 py-8">No se encontraron registros.</p>
-                                ) : hoursDebtLogs.filter(l => new Date(l.date).getFullYear() === selectedDebtYear && (!selectedDebtEmp || l.employeeId === selectedDebtEmp) && (!debtSearchQuery || myEmployees.find(e => e.id === l.employeeId)?.name.toLowerCase().includes(debtSearchQuery.toLowerCase())))
-                                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                                    .map(log => {
-                                        const emp = myEmployees.find(e => e.id === log.employeeId);
-                                        return (
-                                            <div key={log.id} className="bg-slate-50 p-4 rounded-xl flex justify-between items-center group hover:bg-white hover:shadow-md transition-all">
-                                                <div>
-                                                    <p className="font-bold text-slate-700">{emp?.name}</p>
-                                                    <p className="text-sm text-slate-500">{log.reason}</p>
-                                                    <p className="text-[10px] text-slate-400 mt-1">{new Date(log.date).toLocaleDateString()} {new Date(log.date).toLocaleTimeString()}</p>
+                                <div className="space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar">
+                                    {hoursDebtLogs.filter(l => new Date(l.date).getFullYear() === selectedDebtYear && (!selectedDebtEmp || l.employeeId === selectedDebtEmp) && (!debtSearchQuery || myEmployees.find(e => e.id === l.employeeId)?.name.toLowerCase().includes(debtSearchQuery.toLowerCase()))).length === 0 ? (
+                                        <p className="text-center text-slate-400 py-8">No se encontraron registros.</p>
+                                    ) : hoursDebtLogs.filter(l => new Date(l.date).getFullYear() === selectedDebtYear && (!selectedDebtEmp || l.employeeId === selectedDebtEmp) && (!debtSearchQuery || myEmployees.find(e => e.id === l.employeeId)?.name.toLowerCase().includes(debtSearchQuery.toLowerCase())))
+                                        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                                        .map(log => {
+                                            const emp = myEmployees.find(e => e.id === log.employeeId);
+                                            return (
+                                                <div key={log.id} className="bg-slate-50 p-4 rounded-xl flex justify-between items-center group hover:bg-white hover:shadow-md transition-all">
+                                                    <div>
+                                                        <p className="font-bold text-slate-700">{emp?.name}</p>
+                                                        <p className="text-sm text-slate-500">{log.reason}</p>
+                                                        <p className="text-[10px] text-slate-400 mt-1">{new Date(log.date).toLocaleDateString()} {new Date(log.date).toLocaleTimeString()}</p>
+                                                    </div>
+                                                    <span className={clsx("font-black text-lg", log.amount > 0 ? "text-emerald-500" : "text-rose-500")}>
+                                                        {log.amount > 0 ? '+' : ''}{log.amount}h
+                                                    </span>
                                                 </div>
-                                                <span className={clsx("font-black text-lg", log.amount > 0 ? "text-emerald-500" : "text-rose-500")}>
-                                                    {log.amount > 0 ? '+' : ''}{log.amount}h
-                                                </span>
-                                            </div>
-                                        )
-                                    })}
+                                            )
+                                        })}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                )
-            }
+                    )
+                }
 
-            {
-                isRequestHistoryOpen && (
-                    <div id="detailed-history-modal" className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200 overflow-y-auto">
-                        {/* Print Styles */}
-                        <style>{`
+                {
+                    isRequestHistoryOpen && (
+                        <div id="detailed-history-modal" className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200 overflow-y-auto">
+                            {/* Print Styles */}
+                            <style>{`
                         @media print {
                             @page {
                                 size: A4 portrait;
@@ -1289,670 +1562,672 @@ const DashboardPage: React.FC = () => {
                             ::-webkit-scrollbar { display: none; }
                         }
                     `}</style>
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-6xl p-8 shadow-2xl max-h-[90vh] print:max-h-none flex flex-col relative print:shadow-none print:w-full print:max-w-none print:rounded-none">
-                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 no-print">
-                                <div>
-                                    <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
-                                        <UserX className="text-rose-500" size={32} /> Historial Detallado de Bajas
-                                    </h2>
-                                    <p className="text-slate-500 text-sm font-medium mt-1">Desglose anual por empleado, tipo y mensualidad.</p>
-                                </div>
-                                <div className="flex items-center gap-4">
-                                    <button title="Imprimir Informe" onClick={() => window.print()} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-white border border-slate-200 text-slate-700 font-bold flex items-center gap-2">
-                                        <FileText size={20} /> <span className="hidden md:inline">Imprimir</span>
-                                    </button>
-                                    <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1.5">
-                                        <button onClick={() => setDashboardYear(y => y - 1)} className="p-2 hover:bg-white rounded-lg shadow-sm transition-all text-slate-600"><ChevronRight className="rotate-180" size={16} /></button>
-                                        <span className="text-lg font-black text-slate-800 tabular-nums px-2">{dashboardYear}</span>
-                                        <button onClick={() => setDashboardYear(y => y + 1)} className="p-2 hover:bg-white rounded-lg shadow-sm transition-all text-slate-600"><ChevronRight size={16} /></button>
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-6xl p-8 shadow-2xl max-h-[90vh] print:max-h-none flex flex-col relative print:shadow-none print:w-full print:max-w-none print:rounded-none">
+                                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 no-print">
+                                    <div>
+                                        <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+                                            <UserX className="text-rose-500" size={32} /> Historial Detallado de Bajas
+                                        </h2>
+                                        <p className="text-slate-500 text-sm font-medium mt-1">Desglose anual por empleado, tipo y mensualidad.</p>
                                     </div>
-                                    <button onClick={() => setIsRequestHistoryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
-                                        <X size={24} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Print Header */}
-                            <div className="hidden print:block mb-6">
-                                <h1 className="text-2xl font-black text-slate-900">Informe de Bajas y Absentismo - {dashboardYear}</h1>
-                                <p className="text-sm text-slate-500">Generado el {new Date().toLocaleDateString()}</p>
-                            </div>
-
-                            <div className="flex-1 overflow-auto custom-scrollbar border border-slate-100 rounded-3xl shadow-inner bg-slate-50/50 print-container print:border-none print:shadow-none print:bg-white print:overflow-visible">
-                                <table className="w-full text-left border-collapse">
-                                    <thead className="bg-white sticky top-0 z-10 shadow-sm">
-                                        <tr>
-                                            <th rowSpan={2} className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-white border-b border-r border-slate-100">Empleado</th>
-                                            <th rowSpan={2} className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-white border-b border-r border-slate-100 text-center">Rendimiento</th>
-                                            <th colSpan={3} className="p-2 text-[10px] font-black text-white uppercase tracking-[0.2em] bg-rose-500 border-b border-r border-rose-600 text-center">Incapacidad Temporal (IT)</th>
-                                            <th colSpan={3} className="p-2 text-[10px] font-black text-white uppercase tracking-[0.2em] bg-purple-500 border-b border-purple-600 text-center">Maternidad / Paternidad</th>
-                                        </tr>
-                                        <tr>
-                                            {/* IT Subheaders */}
-                                            <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-rose-50 border-b border-r border-rose-100 text-center">Año {dashboardYear}</th>
-                                            <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-rose-50 border-b border-r border-rose-100 text-center">Histórico</th>
-                                            <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-rose-50 border-b border-r border-slate-100 text-center min-w-[200px]">Desglose Mensual ({dashboardYear})</th>
-
-                                            {/* Mat Subheaders */}
-                                            <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-purple-50 border-b border-r border-purple-100 text-center">Año {dashboardYear}</th>
-                                            <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-purple-50 border-b border-r border-purple-100 text-center">Histórico</th>
-                                            <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-purple-50 border-b border-slate-100 text-center min-w-[200px]">Desglose Mensual ({dashboardYear})</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-200/50 bg-white">
-                                        {myEmployees.filter(e => e.active).map(emp => {
-                                            const currentYear = dashboardYear;
-
-                                            // Calculation Helpers
-                                            const getDays = (type: 'sick_leave' | 'maternity_paternity', year?: number) => {
-                                                return timeOffRequests
-                                                    .filter(r => r.employeeId === emp.id && r.type === type)
-                                                    .reduce((acc, req) => {
-                                                        let days = 0;
-                                                        if (req.dates && req.dates.length > 0) {
-                                                            days = req.dates.filter(d => !year || new Date(d).getFullYear() === year).length;
-                                                        } else if (req.startDate && req.endDate) {
-                                                            const s = new Date(req.startDate);
-                                                            const e = new Date(req.endDate);
-                                                            // inclusive dates
-                                                            for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-                                                                if (!year || d.getFullYear() === year) days++;
-                                                            }
-                                                        }
-                                                        return acc + days;
-                                                    }, 0);
-                                            };
-
-                                            const getMonthlyBreakdown = (type: 'sick_leave' | 'maternity_paternity') => {
-                                                const months = Array(12).fill(0);
-                                                timeOffRequests
-                                                    .filter(r => r.employeeId === emp.id && r.type === type)
-                                                    .forEach(req => {
-                                                        if (req.dates && req.dates.length > 0) {
-                                                            req.dates.forEach(d => {
-                                                                const date = new Date(d);
-                                                                if (date.getFullYear() === currentYear) months[date.getMonth()]++;
-                                                            });
-                                                        } else if (req.startDate && req.endDate) {
-                                                            const s = new Date(req.startDate);
-                                                            const e = new Date(req.endDate);
-                                                            // Ensure valid dates using loop
-                                                            for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-                                                                if (d.getFullYear() === currentYear) {
-                                                                    months[d.getMonth()]++;
-                                                                }
-                                                            }
-                                                        }
-                                                    });
-                                                return months; // Returns array of 12 numbers
-                                            };
-
-                                            return {
-                                                emp,
-                                                itYear: getDays('sick_leave', currentYear),
-                                                itTotal: getDays('sick_leave'),
-                                                itMonths: getMonthlyBreakdown('sick_leave'),
-                                                matYear: getDays('maternity_paternity', currentYear),
-                                                matTotal: getDays('maternity_paternity'),
-                                                matMonths: getMonthlyBreakdown('maternity_paternity')
-                                            };
-                                        })
-                                            .sort((a, b) => b.itYear - a.itYear)
-                                            .map(({ emp, itYear, itTotal, itMonths, matYear, matTotal, matMonths }) => {
-                                                const perf = calculatePerformance(itYear, matYear);
-                                                const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-
-                                                const renderMonths = (daysArr: number[], colorClass: string) => {
-                                                    const activeMonths = daysArr.map((d, i) => ({ d, name: monthNames[i] })).filter(m => m.d > 0);
-                                                    if (activeMonths.length === 0) return <span className="text-slate-300 text-[10px] italic">Sin registros</span>;
-                                                    return (
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {activeMonths.map((m, i) => (
-                                                                <span key={`${m.name}-${i}`} className={clsx("text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase whitespace-nowrap", colorClass)}>
-                                                                    {m.name}: {m.d}d
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    );
-                                                }
-
-                                                return (
-                                                    <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
-                                                        <td className="p-4 border-r border-slate-100">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={clsx("h-8 w-8 rounded-lg flex items-center justify-center font-bold text-xs shadow-sm bg-slate-100 text-slate-600")}>
-                                                                    {emp.initials || emp.name.substring(0, 2).toUpperCase()}
-                                                                </div>
-                                                                <div>
-                                                                    <p className="font-bold text-slate-900 text-sm">{emp.name}</p>
-                                                                    <p className="text-[10px] font-semibold text-slate-400 uppercase">{emp.category}</p>
-                                                                </div>
-                                                            </div>
-                                                        </td>
-                                                        <td className="p-4 text-center border-r border-slate-100">
-                                                            <span className={clsx("font-black bg-opacity-10 px-2 py-1 rounded-lg border",
-                                                                perf < 90 ? "text-amber-600 bg-amber-50 border-amber-100" : "text-emerald-600 bg-emerald-50 border-emerald-100"
-                                                            )}>{perf}%</span>
-                                                        </td>
-
-                                                        {/* IT Data */}
-                                                        <td className="p-4 text-center border-r border-slate-100 font-bold text-rose-600 bg-rose-50/30">{itYear}</td>
-                                                        <td className="p-4 text-center border-r border-slate-100 font-medium text-slate-500 bg-rose-50/30">{itTotal}</td>
-                                                        <td className="p-4 border-r border-slate-100 bg-rose-50/30">
-                                                            {renderMonths(itMonths, "bg-white border-rose-100 text-rose-600")}
-                                                        </td>
-
-                                                        {/* Mat Data */}
-                                                        <td className="p-4 text-center border-r border-slate-100 font-bold text-purple-600 bg-purple-50/30">{matYear}</td>
-                                                        <td className="p-4 text-center border-r border-slate-100 font-medium text-slate-500 bg-purple-50/30">{matTotal}</td>
-                                                        <td className="p-4 bg-purple-50/30">
-                                                            {renderMonths(matMonths, "bg-white border-purple-100 text-purple-600")}
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                )
-            }
-
-            {
-                isDebtSummaryOpen && (
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-2xl p-8 shadow-2xl max-h-[80vh] flex flex-col relative overflow-hidden">
-                            <div className="absolute top-0 right-0 w-64 h-64 bg-amber-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
-
-                            <div className="flex justify-between items-start mb-8 relative z-10">
-                                <div>
-                                    <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-                                        <Activity className="text-amber-500" size={28} /> Resumen de Deuda
-                                    </h2>
-                                    <p className="text-slate-500 text-sm font-medium">Estado actual de la bolsa de horas por empleado.</p>
-                                </div>
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={() => {
-                                            setIsDebtSummaryOpen(false);
-                                            setIsDebtHistoryOpen(true);
-                                        }}
-                                        className="p-3 bg-white border border-slate-200 text-slate-600 rounded-2xl hover:bg-slate-50 font-bold text-xs flex items-center gap-2 transition-all shadow-sm"
-                                    >
-                                        <Clock size={16} /> Ver Historial Completo
-                                    </button>
-                                    <button onClick={() => setIsDebtSummaryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
-                                        <X size={20} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="flex-1 overflow-auto custom-scrollbar space-y-3 pr-2 relative z-10">
-                                {myEmployees.filter(e => e.active).sort((a, b) => (b.hoursDebt || 0) - (a.hoursDebt || 0)).map(emp => (
-                                    <div key={emp.id} className="bg-slate-50 border border-slate-100 p-4 rounded-2xl flex items-center justify-between hover:border-amber-200 transition-colors">
-                                        <div className="flex items-center gap-4">
-                                            <div className="h-10 w-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center font-black text-slate-500 text-base shadow-sm">
-                                                {emp.initials || emp.name.split(' ').map(n => n[0]).join('').substring(0, 3)}
-                                            </div>
-                                            <div>
-                                                <p className="font-bold text-slate-900">{emp.name}</p>
-                                                <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">{emp.category}</p>
-                                            </div>
+                                    <div className="flex items-center gap-4">
+                                        <button title="Imprimir Informe" onClick={() => window.print()} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-white border border-slate-200 text-slate-700 font-bold flex items-center gap-2">
+                                            <FileText size={20} /> <span className="hidden md:inline">Imprimir</span>
+                                        </button>
+                                        <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1.5">
+                                            <button onClick={() => setDashboardYear(y => y - 1)} className="p-2 hover:bg-white rounded-lg shadow-sm transition-all text-slate-600"><ChevronRight className="rotate-180" size={16} /></button>
+                                            <span className="text-lg font-black text-slate-800 tabular-nums px-2">{dashboardYear}</span>
+                                            <button onClick={() => setDashboardYear(y => y + 1)} className="p-2 hover:bg-white rounded-lg shadow-sm transition-all text-slate-600"><ChevronRight size={16} /></button>
                                         </div>
-                                        <div className="flex items-center gap-4">
-                                            <div className="text-right">
-                                                <p className={clsx("text-lg font-black", (emp.hoursDebt || 0) > 0 ? "text-amber-600" : "text-emerald-600")}>
-                                                    {(emp.hoursDebt || 0) > 0 ? '+' : ''}{emp.hoursDebt || 0}h
-                                                </p>
-                                                <p className="text-[10px] font-black text-slate-400 uppercase">Pendiente</p>
-                                            </div>
-                                        </div>
+                                        <button onClick={() => setIsRequestHistoryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
+                                            <X size={24} />
+                                        </button>
                                     </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                )
-            }
-
-            {isAnnualPlanOpen && <AnnualPlanModal isOpen={isAnnualPlanOpen} onClose={() => setIsAnnualPlanOpen(false)} establishmentId={user.establishmentId} />}
-
-            {
-                isPayIncentivesOpen && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in zoom-in-95 duration-200">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-md p-8 shadow-2xl relative overflow-visible">
-                            {/* Decoración recortada sólo al fondo */}
-                            <div className="absolute inset-0 rounded-[2.5rem] overflow-hidden pointer-events-none">
-                                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-bl-full -mr-8 -mt-8"></div>
-                            </div>
-                            <h3 className="text-2xl font-black text-slate-900 mb-6 relative z-10">Transferir a Incentivos</h3>
-
-                            <div className="space-y-4 relative z-10">
-                                <div className="space-y-1">
-                                    <FilterSelect
-                                        options={[{ value: '', label: 'Seleccionar...' }, ...myEmployees.map(e => ({ value: e.id, label: `${e.name} (${e.hoursDebt}h)` }))]}
-                                        value={payIncentivesData.employeeId}
-                                        onChange={val => setPayIncentivesData({ ...payIncentivesData, employeeId: val })}
-                                        placeholder="Empleado"
-                                        icon={Users}
-                                        theme="light"
-                                    />
                                 </div>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest pl-1">Cantidad</label>
-                                    <input
-                                        type="number"
-                                        value={payIncentivesData.amount}
-                                        onChange={e => setPayIncentivesData({ ...payIncentivesData, amount: e.target.value })}
-                                        placeholder="0.00"
-                                        className="w-full bg-slate-50 border-none rounded-xl py-3 px-4 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-100"
-                                    />
-                                </div>
-                                <div className="space-y-1">
-                                    <FilterSelect
-                                        options={[{ value: '', label: 'Seleccionar...' }, ...getOpenIncentiveMonths()]}
-                                        value={payIncentivesData.targetMonth}
-                                        onChange={val => setPayIncentivesData({ ...payIncentivesData, targetMonth: val })}
-                                        placeholder="Mes Destino"
-                                        icon={Calendar}
-                                        theme="light"
-                                    />
-                                </div>
-                                <div className="flex gap-3 pt-4">
-                                    <button onClick={() => setIsPayIncentivesOpen(false)} className="flex-1 py-3 text-slate-400 font-bold hover:bg-slate-50 rounded-xl transition-colors">Cancelar</button>
-                                    <button onClick={handlePayIncentives} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all">Confirmar</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )
-            }
 
-            {
-                isWeeklyScheduleOpen && (
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-5xl p-8 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
-                            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
-                            <div className="flex justify-between items-start mb-8 relative z-10">
-                                <div>
-                                    <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-                                        <LayoutList className="text-indigo-500" size={28} /> Horario de la Semana
-                                    </h2>
-                                    <p className="text-slate-500 text-sm font-medium">Del {new Date(currentWeekStart).toLocaleDateString('es-ES', { day: '2-digit', month: 'long' })} al {(() => {
-                                        const d = new Date(currentWeekStart);
-                                        d.setDate(d.getDate() + 6);
-                                        return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
-                                    })()}</p>
+                                {/* Print Header */}
+                                <div className="hidden print:block mb-6">
+                                    <h1 className="text-2xl font-black text-slate-900">Informe de Bajas y Absentismo - {dashboardYear}</h1>
+                                    <p className="text-sm text-slate-500">Generado el {new Date().toLocaleDateString()}</p>
                                 </div>
-                                <button onClick={() => setIsWeeklyScheduleOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
-                                    <X size={20} />
-                                </button>
-                            </div>
 
-                            <div className="flex-1 overflow-auto custom-scrollbar relative z-10">
-                                <div className="bg-slate-50 border border-slate-100 rounded-[2rem] overflow-hidden">
+                                <div className="flex-1 overflow-auto custom-scrollbar border border-slate-100 rounded-3xl shadow-inner bg-slate-50/50 print-container print:border-none print:shadow-none print:bg-white print:overflow-visible">
                                     <table className="w-full text-left border-collapse">
-                                        <thead>
-                                            <tr className="bg-slate-100/50 text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                                                <th className="p-4 sticky left-0 bg-slate-100 z-20">Empleado</th>
-                                                {['Lunes', 'Martes', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(d => (
-                                                    <th key={d} className="p-4 text-center">{d}</th>
-                                                ))}
-                                                <th className="p-4 text-center whitespace-nowrap">H. Contr.</th>
-                                                <th className="p-4 text-center whitespace-nowrap">H. Trab.</th>
-                                                <th className="p-4 text-right">Estado</th>
+                                        <thead className="bg-white sticky top-0 z-10 shadow-sm">
+                                            <tr>
+                                                <th rowSpan={2} className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-white border-b border-r border-slate-100">Empleado</th>
+                                                <th rowSpan={2} className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-white border-b border-r border-slate-100 text-center">Rendimiento</th>
+                                                <th colSpan={3} className="p-2 text-[10px] font-black text-white uppercase tracking-[0.2em] bg-rose-500 border-b border-r border-rose-600 text-center">Incapacidad Temporal (IT)</th>
+                                                <th colSpan={3} className="p-2 text-[10px] font-black text-white uppercase tracking-[0.2em] bg-purple-500 border-b border-purple-600 text-center">Maternidad / Paternidad</th>
+                                            </tr>
+                                            <tr>
+                                                {/* IT Subheaders */}
+                                                <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-rose-50 border-b border-r border-rose-100 text-center">Año {dashboardYear}</th>
+                                                <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-rose-50 border-b border-r border-rose-100 text-center">Histórico</th>
+                                                <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-rose-50 border-b border-r border-slate-100 text-center min-w-[200px]">Desglose Mensual ({dashboardYear})</th>
+
+                                                {/* Mat Subheaders */}
+                                                <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-purple-50 border-b border-r border-purple-100 text-center">Año {dashboardYear}</th>
+                                                <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-purple-50 border-b border-r border-purple-100 text-center">Histórico</th>
+                                                <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-wider bg-purple-50 border-b border-slate-100 text-center min-w-[200px]">Desglose Mensual ({dashboardYear})</th>
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {weeklyDetailedTable.map(row => {
-                                                const diff = row.worked - row.contracted;
-                                                return (
-                                                    <tr key={row.id} className="hover:bg-white transition-colors">
-                                                        <td className="p-4 font-bold text-slate-700 text-sm sticky left-0 bg-white/80 backdrop-blur-sm z-10">
-                                                            {row.name}
-                                                        </td>
-                                                        {row.shifts.map((s, idx) => (
-                                                            <td key={idx} className="p-4 text-center">
-                                                                <span className={clsx(
-                                                                    "text-[10px] font-bold px-2 py-1 rounded-lg uppercase tracking-wider",
-                                                                    s === 'Mañana' ? "bg-blue-50 text-blue-600 border border-blue-100" :
-                                                                        s === 'Tarde' ? "bg-orange-50 text-orange-600 border border-orange-100" :
-                                                                            s === 'M/T' ? "bg-purple-50 text-purple-600 border border-purple-100" :
-                                                                                s === 'Libre' ? "bg-slate-50 text-slate-400" :
-                                                                                    s === 'Vacaciones' ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
-                                                                                        s === 'Baja Médica' ? "bg-rose-50 text-rose-600 border border-rose-100" :
-                                                                                            "text-slate-300"
-                                                                )}>
-                                                                    {s === 'Mañana' ? 'Mañ' : s === 'Tarde' ? 'Tar' : s === 'Libre' ? 'Lib' : s === 'Vacaciones' ? 'Vac' : s === 'Baja Médica' ? 'IT' : s}
-                                                                </span>
+                                        <tbody className="divide-y divide-slate-200/50 bg-white">
+                                            {myEmployees.filter(e => e.active).map(emp => {
+                                                const currentYear = dashboardYear;
+
+                                                // Calculation Helpers
+                                                const getDays = (type: 'sick_leave' | 'maternity_paternity', year?: number) => {
+                                                    return timeOffRequests
+                                                        .filter(r => r.employeeId === emp.id && r.type === type)
+                                                        .reduce((acc, req) => {
+                                                            let days = 0;
+                                                            if (req.dates && req.dates.length > 0) {
+                                                                days = req.dates.filter(d => !year || new Date(d).getFullYear() === year).length;
+                                                            } else if (req.startDate && req.endDate) {
+                                                                const s = new Date(req.startDate);
+                                                                const e = new Date(req.endDate);
+                                                                // inclusive dates
+                                                                for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+                                                                    if (!year || d.getFullYear() === year) days++;
+                                                                }
+                                                            }
+                                                            return acc + days;
+                                                        }, 0);
+                                                };
+
+                                                const getMonthlyBreakdown = (type: 'sick_leave' | 'maternity_paternity') => {
+                                                    const months = Array(12).fill(0);
+                                                    timeOffRequests
+                                                        .filter(r => r.employeeId === emp.id && r.type === type)
+                                                        .forEach(req => {
+                                                            if (req.dates && req.dates.length > 0) {
+                                                                req.dates.forEach(d => {
+                                                                    const date = new Date(d);
+                                                                    if (date.getFullYear() === currentYear) months[date.getMonth()]++;
+                                                                });
+                                                            } else if (req.startDate && req.endDate) {
+                                                                const s = new Date(req.startDate);
+                                                                const e = new Date(req.endDate);
+                                                                // Ensure valid dates using loop
+                                                                for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+                                                                    if (d.getFullYear() === currentYear) {
+                                                                        months[d.getMonth()]++;
+                                                                    }
+                                                                }
+                                                            }
+                                                        });
+                                                    return months; // Returns array of 12 numbers
+                                                };
+
+                                                return {
+                                                    emp,
+                                                    itYear: getDays('sick_leave', currentYear),
+                                                    itTotal: getDays('sick_leave'),
+                                                    itMonths: getMonthlyBreakdown('sick_leave'),
+                                                    matYear: getDays('maternity_paternity', currentYear),
+                                                    matTotal: getDays('maternity_paternity'),
+                                                    matMonths: getMonthlyBreakdown('maternity_paternity')
+                                                };
+                                            })
+                                                .sort((a, b) => b.itYear - a.itYear)
+                                                .map(({ emp, itYear, itTotal, itMonths, matYear, matTotal, matMonths }) => {
+                                                    const perf = calculatePerformance(itYear, matYear);
+                                                    const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+                                                    const renderMonths = (daysArr: number[], colorClass: string) => {
+                                                        const activeMonths = daysArr.map((d, i) => ({ d, name: monthNames[i] })).filter(m => m.d > 0);
+                                                        if (activeMonths.length === 0) return <span className="text-slate-300 text-[10px] italic">Sin registros</span>;
+                                                        return (
+                                                            <div className="flex flex-wrap gap-1">
+                                                                {activeMonths.map((m, i) => (
+                                                                    <span key={`${m.name}-${i}`} className={clsx("text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase whitespace-nowrap", colorClass)}>
+                                                                        {m.name}: {m.d}d
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        );
+                                                    }
+
+                                                    return (
+                                                        <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
+                                                            <td className="p-4 border-r border-slate-100">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className={clsx("h-8 w-8 rounded-lg flex items-center justify-center font-bold text-xs shadow-sm bg-slate-100 text-slate-600")}>
+                                                                        {emp.initials || emp.name.substring(0, 2).toUpperCase()}
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="font-bold text-slate-900 text-sm">{emp.name}</p>
+                                                                        <p className="text-[10px] font-semibold text-slate-400 uppercase">{emp.category}</p>
+                                                                    </div>
+                                                                </div>
                                                             </td>
-                                                        ))}
-                                                        <td className="p-4 text-center font-bold text-slate-400 text-sm">{row.contracted}h</td>
-                                                        <td className="p-4 text-center font-black text-indigo-600 text-sm">{row.worked}h</td>
-                                                        <td className="p-4 text-right">
-                                                            <span className={clsx(
-                                                                "px-2 py-1 rounded-lg text-[10px] font-black",
-                                                                diff === 0 ? "bg-emerald-100 text-emerald-700" :
-                                                                    diff > 0 ? "bg-indigo-100 text-indigo-700" : "bg-amber-100 text-amber-700"
-                                                            )}>
-                                                                {diff === 0 ? 'OK' : diff > 0 ? `+${diff}h` : `${diff}h`}
-                                                            </span>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
+                                                            <td className="p-4 text-center border-r border-slate-100">
+                                                                <span className={clsx("font-black bg-opacity-10 px-2 py-1 rounded-lg border",
+                                                                    perf < 90 ? "text-amber-600 bg-amber-50 border-amber-100" : "text-emerald-600 bg-emerald-50 border-emerald-100"
+                                                                )}>{perf}%</span>
+                                                            </td>
+
+                                                            {/* IT Data */}
+                                                            <td className="p-4 text-center border-r border-slate-100 font-bold text-rose-600 bg-rose-50/30">{itYear}</td>
+                                                            <td className="p-4 text-center border-r border-slate-100 font-medium text-slate-500 bg-rose-50/30">{itTotal}</td>
+                                                            <td className="p-4 border-r border-slate-100 bg-rose-50/30">
+                                                                {renderMonths(itMonths, "bg-white border-rose-100 text-rose-600")}
+                                                            </td>
+
+                                                            {/* Mat Data */}
+                                                            <td className="p-4 text-center border-r border-slate-100 font-bold text-purple-600 bg-purple-50/30">{matYear}</td>
+                                                            <td className="p-4 text-center border-r border-slate-100 font-medium text-slate-500 bg-purple-50/30">{matTotal}</td>
+                                                            <td className="p-4 bg-purple-50/30">
+                                                                {renderMonths(matMonths, "bg-white border-purple-100 text-purple-600")}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
                                         </tbody>
                                     </table>
                                 </div>
                             </div>
+                        </div>
+                    )
+                }
 
-                            <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
-                                <div className="bg-indigo-50/50 p-6 rounded-[2rem] border border-indigo-100">
-                                    <p className="text-[10px] font-black uppercase text-indigo-400 mb-1">Total Horas Tienda</p>
-                                    <div className="flex items-baseline gap-2">
-                                        <span className="text-3xl font-black text-indigo-600">{weeklyDetailedTable.reduce((acc, r) => acc + r.worked, 0)}h</span>
-                                        <span className="text-sm font-bold text-indigo-400">esta semana</span>
+                {
+                    isDebtSummaryOpen && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-2xl p-8 shadow-2xl max-h-[80vh] flex flex-col relative overflow-hidden">
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-amber-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
+
+                                <div className="flex justify-between items-start mb-8 relative z-10">
+                                    <div>
+                                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                                            <Activity className="text-amber-500" size={28} /> Resumen de Deuda
+                                        </h2>
+                                        <p className="text-slate-500 text-sm font-medium">Estado actual de la bolsa de horas por empleado.</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => {
+                                                setIsDebtSummaryOpen(false);
+                                                setIsDebtHistoryOpen(true);
+                                            }}
+                                            className="p-3 bg-white border border-slate-200 text-slate-600 rounded-2xl hover:bg-slate-50 font-bold text-xs flex items-center gap-2 transition-all shadow-sm"
+                                        >
+                                            <Clock size={16} /> Ver Historial Completo
+                                        </button>
+                                        <button onClick={() => setIsDebtSummaryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
+                                            <X size={20} />
+                                        </button>
                                     </div>
                                 </div>
-                                <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-                                    <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Diferencia Plantilla</p>
-                                    <div className="flex items-baseline gap-2">
-                                        <span className={clsx(
-                                            "text-3xl font-black",
-                                            weeklyDetailedTable.reduce((acc, r) => acc + (r.worked - r.contracted), 0) >= 0 ? "text-emerald-600" : "text-amber-600"
-                                        )}>
-                                            {weeklyDetailedTable.reduce((acc, r) => acc + (r.worked - r.contracted), 0) > 0 ? '+' : ''}
-                                            {weeklyDetailedTable.reduce((acc, r) => acc + (r.worked - r.contracted), 0)}h
-                                        </span>
-                                        <span className="text-sm font-bold text-slate-400">vs contrato</span>
-                                    </div>
+
+                                <div className="flex-1 overflow-auto custom-scrollbar space-y-3 pr-2 relative z-10">
+                                    {myEmployees.filter(e => e.active).sort((a, b) => (b.hoursDebt || 0) - (a.hoursDebt || 0)).map(emp => (
+                                        <div key={emp.id} className="bg-slate-50 border border-slate-100 p-4 rounded-2xl flex items-center justify-between hover:border-amber-200 transition-colors">
+                                            <div className="flex items-center gap-4">
+                                                <div className="h-10 w-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center font-black text-slate-500 text-base shadow-sm">
+                                                    {emp.initials || emp.name.split(' ').map(n => n[0]).join('').substring(0, 3)}
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold text-slate-900">{emp.name}</p>
+                                                    <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">{emp.category}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                <div className="text-right">
+                                                    <p className={clsx("text-lg font-black", (emp.hoursDebt || 0) > 0 ? "text-amber-600" : "text-emerald-600")}>
+                                                        {(emp.hoursDebt || 0) > 0 ? '+' : ''}{emp.hoursDebt || 0}h
+                                                    </p>
+                                                    <p className="text-[10px] font-black text-slate-400 uppercase">Pendiente</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
-                                <div className="bg-violet-50/50 p-6 rounded-[2rem] border border-violet-100">
-                                    <p className="text-[10px] font-black uppercase text-violet-400 mb-1">Cobertura Media</p>
-                                    <div className="flex items-baseline gap-2">
-                                        <span className="text-3xl font-black text-violet-600">
-                                            {Math.round((weeklyDetailedTable.reduce((acc, r) => acc + r.worked, 0) / (weeklyDetailedTable.reduce((acc, r) => acc + r.contracted, 0) || 1)) * 100)}%
-                                        </span>
-                                        <span className="text-sm font-bold text-violet-400">de objetivo</span>
+                            </div>
+                        </div>
+                    )
+                }
+
+                {isAnnualPlanOpen && <AnnualPlanModal isOpen={isAnnualPlanOpen} onClose={() => setIsAnnualPlanOpen(false)} establishmentId={user.establishmentId} />}
+
+                {
+                    isPayIncentivesOpen && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in zoom-in-95 duration-200">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-md p-8 shadow-2xl relative overflow-visible">
+                                {/* Decoración recortada sólo al fondo */}
+                                <div className="absolute inset-0 rounded-[2.5rem] overflow-hidden pointer-events-none">
+                                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-bl-full -mr-8 -mt-8"></div>
+                                </div>
+                                <h3 className="text-2xl font-black text-slate-900 mb-6 relative z-10">Transferir a Incentivos</h3>
+
+                                <div className="space-y-4 relative z-10">
+                                    <div className="space-y-1">
+                                        <FilterSelect
+                                            options={[{ value: '', label: 'Seleccionar...' }, ...myEmployees.map(e => ({ value: e.id, label: `${e.name} (${e.hoursDebt}h)` }))]}
+                                            value={payIncentivesData.employeeId}
+                                            onChange={val => setPayIncentivesData({ ...payIncentivesData, employeeId: val })}
+                                            placeholder="Empleado"
+                                            icon={Users}
+                                            theme="light"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest pl-1">Cantidad</label>
+                                        <input
+                                            type="number"
+                                            value={payIncentivesData.amount}
+                                            onChange={e => setPayIncentivesData({ ...payIncentivesData, amount: e.target.value })}
+                                            placeholder="0.00"
+                                            className="w-full bg-slate-50 border-none rounded-xl py-3 px-4 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-100"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <FilterSelect
+                                            options={[{ value: '', label: 'Seleccionar...' }, ...getOpenIncentiveMonths()]}
+                                            value={payIncentivesData.targetMonth}
+                                            onChange={val => setPayIncentivesData({ ...payIncentivesData, targetMonth: val })}
+                                            placeholder="Mes Destino"
+                                            icon={Calendar}
+                                            theme="light"
+                                        />
+                                    </div>
+                                    <div className="flex gap-3 pt-4">
+                                        <button onClick={() => setIsPayIncentivesOpen(false)} className="flex-1 py-3 text-slate-400 font-bold hover:bg-slate-50 rounded-xl transition-colors">Cancelar</button>
+                                        <button onClick={handlePayIncentives} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all">Confirmar</button>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )
-            }
+                    )
+                }
 
-            {
-                isHoursSummaryOpen && (
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-3xl p-8 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
-                            <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
-                            <div className="flex justify-between items-start mb-8 relative z-10">
-                                <div>
-                                    <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-                                        <Clock className="text-blue-500" size={28} /> Resumen de Horas
-                                    </h2>
-                                    <p className="text-slate-500 text-sm font-medium">Contraste entre horas contratadas y trabajadas.</p>
+                {
+                    isWeeklyScheduleOpen && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-5xl p-8 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
+                                <div className="flex justify-between items-start mb-8 relative z-10">
+                                    <div>
+                                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                                            <LayoutList className="text-indigo-500" size={28} /> Horario de la Semana
+                                        </h2>
+                                        <p className="text-slate-500 text-sm font-medium">Del {new Date(currentWeekStart).toLocaleDateString('es-ES', { day: '2-digit', month: 'long' })} al {(() => {
+                                            const d = new Date(currentWeekStart);
+                                            d.setDate(d.getDate() + 6);
+                                            return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
+                                        })()}</p>
+                                    </div>
+                                    <button onClick={() => setIsWeeklyScheduleOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
+                                        <X size={20} />
+                                    </button>
                                 </div>
-                                <button onClick={() => setIsHoursSummaryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
-                                    <X size={20} />
-                                </button>
-                            </div>
 
-                            <div className="flex-1 overflow-auto custom-scrollbar relative z-10 space-y-8">
-                                <section>
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Desglose por Semanas (Último Mes)</h4>
+                                <div className="flex-1 overflow-auto custom-scrollbar relative z-10">
                                     <div className="bg-slate-50 border border-slate-100 rounded-[2rem] overflow-hidden">
-                                        <table className="w-full text-left">
+                                        <table className="w-full text-left border-collapse">
                                             <thead>
                                                 <tr className="bg-slate-100/50 text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                                                    <th className="p-4">Semana</th>
-                                                    <th className="p-4 text-center">Contratadas</th>
-                                                    <th className="p-4 text-center">Trabajadas</th>
-                                                    <th className="p-4 text-center">Diferencia</th>
-                                                    <th className="p-4 text-right">Cobertura</th>
+                                                    <th className="p-4 sticky left-0 bg-slate-100 z-20">Empleado</th>
+                                                    {['Lunes', 'Martes', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(d => (
+                                                        <th key={d} className="p-4 text-center">{d}</th>
+                                                    ))}
+                                                    <th className="p-4 text-center whitespace-nowrap">H. Contr.</th>
+                                                    <th className="p-4 text-center whitespace-nowrap">H. Trab.</th>
+                                                    <th className="p-4 text-right">Estado</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
-                                                {weeklyStats.map(w => (
-                                                    <tr key={w.label} className="hover:bg-white transition-colors">
-                                                        <td className="p-4 font-bold text-slate-700 text-sm">
-                                                            {w.label.includes('-') ? w.label.split('-').reverse().join('/') : w.label}
-                                                        </td>
-                                                        <td className="p-4 text-center font-bold text-slate-500 text-sm">{w.contracted.toFixed(0)}h</td>
-                                                        <td className="p-4 text-center font-black text-indigo-600 text-sm">{w.worked.toFixed(0)}h</td>
-                                                        <td className={clsx("p-4 text-center font-bold text-sm", (w.worked - w.contracted) >= 0 ? "text-emerald-500" : "text-rose-500")}>
-                                                            {(w.worked - w.contracted) > 0 ? '+' : ''}{(w.worked - w.contracted).toFixed(0)}h
-                                                        </td>
-                                                        <td className="p-4 text-right">
-                                                            <span className={clsx("px-2 py-1 rounded-lg text-[10px] font-black", w.coverage >= 95 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
-                                                                {w.coverage.toFixed(0)}%
-                                                            </span>
-                                                        </td>
-                                                    </tr>
-                                                ))}
+                                                {weeklyDetailedTable.map(row => {
+                                                    const diff = row.worked - row.contracted;
+                                                    return (
+                                                        <tr key={row.id} className="hover:bg-white transition-colors">
+                                                            <td className="p-4 font-bold text-slate-700 text-sm sticky left-0 bg-white/80 backdrop-blur-sm z-10">
+                                                                {row.name}
+                                                            </td>
+                                                            {row.shifts.map((s, idx) => (
+                                                                <td key={idx} className="p-4 text-center">
+                                                                    <span className={clsx(
+                                                                        "text-[10px] font-bold px-2 py-1 rounded-lg uppercase tracking-wider",
+                                                                        s === 'Mañana' ? "bg-blue-50 text-blue-600 border border-blue-100" :
+                                                                            s === 'Tarde' ? "bg-orange-50 text-orange-600 border border-orange-100" :
+                                                                                s === 'M/T' ? "bg-purple-50 text-purple-600 border border-purple-100" :
+                                                                                    s === 'Libre' ? "bg-slate-50 text-slate-400" :
+                                                                                        s === 'Vacaciones' ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                                                                                            s === 'Baja Médica' ? "bg-rose-50 text-rose-600 border border-rose-100" :
+                                                                                                "text-slate-300"
+                                                                    )}>
+                                                                        {s === 'Mañana' ? 'Mañ' : s === 'Tarde' ? 'Tar' : s === 'Libre' ? 'Lib' : s === 'Vacaciones' ? 'Vac' : s === 'Baja Médica' ? 'IT' : s}
+                                                                    </span>
+                                                                </td>
+                                                            ))}
+                                                            <td className="p-4 text-center font-bold text-slate-400 text-sm">{row.contracted}h</td>
+                                                            <td className="p-4 text-center font-black text-indigo-600 text-sm">{row.worked}h</td>
+                                                            <td className="p-4 text-right">
+                                                                <span className={clsx(
+                                                                    "px-2 py-1 rounded-lg text-[10px] font-black",
+                                                                    diff === 0 ? "bg-emerald-100 text-emerald-700" :
+                                                                        diff > 0 ? "bg-indigo-100 text-indigo-700" : "bg-amber-100 text-amber-700"
+                                                                )}>
+                                                                    {diff === 0 ? 'OK' : diff > 0 ? `+${diff}h` : `${diff}h`}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>
-                                </section>
+                                </div>
 
-                                <section>
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Resumen Mensual (Histórico)</h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                        {monthlyStatsData.map(m => (
-                                            <div key={m.label} className="bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow">
-                                                <p className="text-[10px] font-black uppercase text-slate-400 mb-3">
-                                                    {new Date(m.label + '-02').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-                                                </p>
-                                                <div className="flex justify-between items-end">
-                                                    <div>
-                                                        <p className="text-2xl font-black text-slate-800">{m.worked.toFixed(0)}h</p>
-                                                        <p className="text-[10px] font-bold text-slate-400">Total Trabajadas</p>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <p className="text-sm font-black text-blue-500">{m.coverage.toFixed(1)}%</p>
-                                                        <p className="text-[9px] font-bold text-slate-400">Cobertura</p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
+                                <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+                                    <div className="bg-indigo-50/50 p-6 rounded-[2rem] border border-indigo-100">
+                                        <p className="text-[10px] font-black uppercase text-indigo-400 mb-1">Total Horas Tienda</p>
+                                        <div className="flex items-baseline gap-2">
+                                            <span className="text-3xl font-black text-indigo-600">{weeklyDetailedTable.reduce((acc, r) => acc + r.worked, 0)}h</span>
+                                            <span className="text-sm font-bold text-indigo-400">esta semana</span>
+                                        </div>
                                     </div>
-                                </section>
+                                    <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                                        <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Diferencia Plantilla</p>
+                                        <div className="flex items-baseline gap-2">
+                                            <span className={clsx(
+                                                "text-3xl font-black",
+                                                weeklyDetailedTable.reduce((acc, r) => acc + (r.worked - r.contracted), 0) >= 0 ? "text-emerald-600" : "text-amber-600"
+                                            )}>
+                                                {weeklyDetailedTable.reduce((acc, r) => acc + (r.worked - r.contracted), 0) > 0 ? '+' : ''}
+                                                {weeklyDetailedTable.reduce((acc, r) => acc + (r.worked - r.contracted), 0)}h
+                                            </span>
+                                            <span className="text-sm font-bold text-slate-400">vs contrato</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-violet-50/50 p-6 rounded-[2rem] border border-violet-100">
+                                        <p className="text-[10px] font-black uppercase text-violet-400 mb-1">Cobertura Media</p>
+                                        <div className="flex items-baseline gap-2">
+                                            <span className="text-3xl font-black text-violet-600">
+                                                {Math.round((weeklyDetailedTable.reduce((acc, r) => acc + r.worked, 0) / (weeklyDetailedTable.reduce((acc, r) => acc + r.contracted, 0) || 1)) * 100)}%
+                                            </span>
+                                            <span className="text-sm font-bold text-violet-400">de objetivo</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                )
-            }
+                    )
+                }
 
-            {
-                isPersonnelHistoryOpen && (
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-4xl p-8 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
-                            <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
-                            <div className="flex justify-between items-start mb-8 relative z-10">
-                                <div className="flex gap-4">
-                                    <button
-                                        onClick={() => setShowPersonnelLogs(false)}
-                                        className={clsx(
-                                            "pb-2 text-xl font-black uppercase tracking-tight transition-all",
-                                            !showPersonnelLogs ? "text-slate-900 border-b-4 border-emerald-500" : "text-slate-400 hover:text-slate-600"
-                                        )}
-                                    >
-                                        Horas Contratadas
-                                    </button>
-                                    <button
-                                        onClick={() => setShowPersonnelLogs(true)}
-                                        className={clsx(
-                                            "pb-2 text-xl font-black uppercase tracking-tight transition-all",
-                                            showPersonnelLogs ? "text-slate-900 border-b-4 border-emerald-500" : "text-slate-400 hover:text-slate-600"
-                                        )}
-                                    >
-                                        Altas / Bajas
+                {
+                    isHoursSummaryOpen && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-3xl p-8 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
+                                <div className="flex justify-between items-start mb-8 relative z-10">
+                                    <div>
+                                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                                            <Clock className="text-blue-500" size={28} /> Resumen de Horas
+                                        </h2>
+                                        <p className="text-slate-500 text-sm font-medium">Contraste entre horas contratadas y trabajadas.</p>
+                                    </div>
+                                    <button onClick={() => setIsHoursSummaryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
+                                        <X size={20} />
                                     </button>
                                 </div>
-                                <button onClick={() => setIsPersonnelHistoryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
-                                    <X size={20} />
-                                </button>
-                            </div>
 
-                            <div className="flex-1 overflow-auto custom-scrollbar relative z-10">
-                                {!showPersonnelLogs ? (
-                                    <div className="space-y-8">
-                                        <section>
-                                            <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Histórico Mensual (Estimado)</h4>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                                                {[...Array(6)].map((_, i) => {
-                                                    const d = new Date();
-                                                    d.setMonth(d.getMonth() - i);
-                                                    const label = d.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
-                                                    // Simplified: Using current total for the demo, but logic would check seniority/contractEnd
-                                                    const totalH = myEmployees.filter(e => {
-                                                        const hireDate = e.seniorityDate ? new Date(e.seniorityDate) : new Date(0);
-                                                        hireDate.setHours(0, 0, 0, 0);
-                                                        const refDate = new Date(d);
-                                                        refDate.setHours(23, 59, 59, 999);
-                                                        return hireDate <= refDate;
-                                                    }).reduce((acc, e) => acc + e.weeklyHours, 0) * 4.33;
-
-                                                    return (
-                                                        <div key={label} className="bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow">
-                                                            <p className="text-[10px] font-black uppercase text-slate-400 mb-3">{label}</p>
-                                                            <p className="text-2xl font-black text-slate-800">{totalH.toFixed(0)}h</p>
-                                                            <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">Horas Contratadas</p>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </section>
-
-                                        <section>
-                                            <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Histórico Anual</h4>
-                                            <div className="bg-slate-50 border border-slate-100 rounded-[2rem] overflow-hidden">
-                                                <table className="w-full text-left">
-                                                    <thead className="bg-slate-100/50 text-[10px] font-black uppercase text-slate-500">
-                                                        <tr>
-                                                            <th className="p-4">Año</th>
-                                                            <th className="p-4 text-center">Media Plantilla</th>
-                                                            <th className="p-4 text-right">Horas / Año</th>
+                                <div className="flex-1 overflow-auto custom-scrollbar relative z-10 space-y-8">
+                                    <section>
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Desglose por Semanas (Último Mes)</h4>
+                                        <div className="bg-slate-50 border border-slate-100 rounded-[2rem] overflow-hidden">
+                                            <table className="w-full text-left">
+                                                <thead>
+                                                    <tr className="bg-slate-100/50 text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                                                        <th className="p-4">Semana</th>
+                                                        <th className="p-4 text-center">Contratadas</th>
+                                                        <th className="p-4 text-center">Trabajadas</th>
+                                                        <th className="p-4 text-center">Diferencia</th>
+                                                        <th className="p-4 text-right">Cobertura</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {weeklyStats.map(w => (
+                                                        <tr key={w.label} className="hover:bg-white transition-colors">
+                                                            <td className="p-4 font-bold text-slate-700 text-sm">
+                                                                {w.label.includes('-') ? w.label.split('-').reverse().join('/') : w.label}
+                                                            </td>
+                                                            <td className="p-4 text-center font-bold text-slate-500 text-sm">{w.contracted.toFixed(0)}h</td>
+                                                            <td className="p-4 text-center font-black text-indigo-600 text-sm">{w.worked.toFixed(0)}h</td>
+                                                            <td className={clsx("p-4 text-center font-bold text-sm", (w.worked - w.contracted) >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                                                                {(w.worked - w.contracted) > 0 ? '+' : ''}{(w.worked - w.contracted).toFixed(0)}h
+                                                            </td>
+                                                            <td className="p-4 text-right">
+                                                                <span className={clsx("px-2 py-1 rounded-lg text-[10px] font-black", w.coverage >= 95 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
+                                                                    {w.coverage.toFixed(0)}%
+                                                                </span>
+                                                            </td>
                                                         </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-slate-100">
-                                                        {[2026, 2025, 2024].map(year => (
-                                                            <tr key={year} className="hover:bg-white transition-colors">
-                                                                <td className="p-4 font-black text-slate-700">{year}</td>
-                                                                <td className="p-4 text-center font-bold text-slate-500">{myEmployees.length} empleados</td>
-                                                                <td className="p-4 text-right font-black text-emerald-600">
-                                                                    {(totalContractedHours * 52).toFixed(0)}h
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </section>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4 pr-2">
-                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-2">Registro de Altas y Bajas</h4>
-                                        {employeeLogs
-                                            .filter(l => (l.type === 'hire' || l.type === 'termination') && l.establishmentId === user.establishmentId)
-                                            .map(log => (
-                                                <div key={log.id} className="bg-slate-50 border border-slate-100 p-4 rounded-2xl flex items-center justify-between hover:border-emerald-200 transition-colors">
-                                                    <div className="flex items-center gap-4">
-                                                        <div className={clsx(
-                                                            "h-10 w-10 rounded-xl flex items-center justify-center shadow-sm",
-                                                            log.type === 'hire' ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-600"
-                                                        )}>
-                                                            {log.type === 'hire' ? <UserCheck size={20} /> : <UserX size={20} />}
-                                                        </div>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </section>
+
+                                    <section>
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Resumen Mensual (Histórico)</h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {monthlyStatsData.map(m => (
+                                                <div key={m.label} className="bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow">
+                                                    <p className="text-[10px] font-black uppercase text-slate-400 mb-3">
+                                                        {new Date(m.label + '-02').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                                                    </p>
+                                                    <div className="flex justify-between items-end">
                                                         <div>
-                                                            <p className="font-bold text-slate-900">{log.details}</p>
-                                                            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">{new Date(log.date).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                                                            <p className="text-2xl font-black text-slate-800">{m.worked.toFixed(0)}h</p>
+                                                            <p className="text-[10px] font-bold text-slate-400">Total Trabajadas</p>
                                                         </div>
-                                                    </div>
-                                                    <div className={clsx(
-                                                        "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                                                        log.type === 'hire' ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
-                                                    )}>
-                                                        {log.type === 'hire' ? 'Alta' : 'Baja'}
+                                                        <div className="text-right">
+                                                            <p className="text-sm font-black text-blue-500">{m.coverage.toFixed(1)}%</p>
+                                                            <p className="text-[9px] font-bold text-slate-400">Cobertura</p>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             ))}
-                                        {employeeLogs.filter(l => (l.type === 'hire' || l.type === 'termination') && l.establishmentId === user.establishmentId).length === 0 && (
-                                            <div className="text-center py-12">
-                                                <Activity className="mx-auto text-slate-200 mb-3" size={48} />
-                                                <p className="text-slate-400 font-bold">No hay registros de movimientos de personal.</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )
-            }
-
-            {
-                isCoverageSummaryOpen && (
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
-                        <div className="bg-white rounded-[2.5rem] w-full max-w-3xl p-8 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
-                            <div className="absolute top-0 right-0 w-64 h-64 bg-violet-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
-                            <div className="flex justify-between items-start mb-8 relative z-10">
-                                <div>
-                                    <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-                                        <Zap className="text-violet-500" size={28} /> Resumen de Cobertura
-                                    </h2>
-                                    <p className="text-slate-500 text-sm font-medium">Cumplimiento de horas contratadas por periodo.</p>
+                                        </div>
+                                    </section>
                                 </div>
-                                <button onClick={() => setIsCoverageSummaryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
-                                    <X size={20} />
-                                </button>
-                            </div>
-
-                            <div className="flex-1 overflow-auto custom-scrollbar relative z-10 space-y-8">
-                                <section>
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Cobertura por Meses</h4>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
-                                        {monthlyStatsData.map(m => (
-                                            <div key={m.label} className="bg-slate-50 border border-slate-100 p-6 rounded-[2.5rem] relative overflow-hidden group">
-                                                <div className="absolute top-0 right-0 h-1.5 w-full bg-slate-200">
-                                                    <div style={{ width: `${Math.min(m.coverage, 100)}%` }} className={clsx("h-full transition-all duration-1000", m.coverage >= 98 ? "bg-emerald-500" : m.coverage >= 90 ? "bg-violet-500" : "bg-amber-500")}></div>
-                                                </div>
-                                                <p className="text-[10px] font-black uppercase text-slate-400 mb-2 mt-2">{new Date(m.label + '-01').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</p>
-                                                <p className="text-3xl font-black text-slate-800 mb-1">{m.coverage.toFixed(1)}%</p>
-                                                <p className="text-[10px] font-bold text-slate-400">Target: {m.contracted.toFixed(0)}h</p>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </section>
-
-                                <section>
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Histórico Anual</h4>
-                                    <div className="space-y-3">
-                                        {yearlyStatsData.map(y => (
-                                            <div key={y.label} className="bg-white border border-slate-100 p-6 rounded-[2rem] flex items-center justify-between hover:shadow-md transition-shadow">
-                                                <div className="flex items-center gap-6">
-                                                    <div className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center font-black text-slate-400">
-                                                        {y.label}
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-lg font-black text-slate-800">{y.coverage.toFixed(1)}% Cobertura Media</p>
-                                                        <p className="text-xs font-bold text-slate-400">Total Horas: {y.worked.toFixed(0)}h (Contratadas: {y.contracted.toFixed(0)}h)</p>
-                                                    </div>
-                                                </div>
-                                                <ChevronRight className="text-slate-300" />
-                                            </div>
-                                        ))}
-                                    </div>
-                                </section>
                             </div>
                         </div>
-                    </div>
-                )
-            }
+                    )
+                }
 
-        </div >
+                {
+                    isPersonnelHistoryOpen && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-4xl p-8 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
+                                <div className="flex justify-between items-start mb-8 relative z-10">
+                                    <div className="flex gap-4">
+                                        <button
+                                            onClick={() => setShowPersonnelLogs(false)}
+                                            className={clsx(
+                                                "pb-2 text-xl font-black uppercase tracking-tight transition-all",
+                                                !showPersonnelLogs ? "text-slate-900 border-b-4 border-emerald-500" : "text-slate-400 hover:text-slate-600"
+                                            )}
+                                        >
+                                            Horas Contratadas
+                                        </button>
+                                        <button
+                                            onClick={() => setShowPersonnelLogs(true)}
+                                            className={clsx(
+                                                "pb-2 text-xl font-black uppercase tracking-tight transition-all",
+                                                showPersonnelLogs ? "text-slate-900 border-b-4 border-emerald-500" : "text-slate-400 hover:text-slate-600"
+                                            )}
+                                        >
+                                            Altas / Bajas
+                                        </button>
+                                    </div>
+                                    <button onClick={() => setIsPersonnelHistoryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
+                                        <X size={20} />
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 overflow-auto custom-scrollbar relative z-10">
+                                    {!showPersonnelLogs ? (
+                                        <div className="space-y-8">
+                                            <section>
+                                                <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Histórico Mensual (Estimado)</h4>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                                    {[...Array(6)].map((_, i) => {
+                                                        const d = new Date();
+                                                        d.setMonth(d.getMonth() - i);
+                                                        const label = d.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+                                                        // Simplified: Using current total for the demo, but logic would check seniority/contractEnd
+                                                        const totalH = myEmployees.filter(e => {
+                                                            const hireDate = e.seniorityDate ? new Date(e.seniorityDate) : new Date(0);
+                                                            hireDate.setHours(0, 0, 0, 0);
+                                                            const refDate = new Date(d);
+                                                            refDate.setHours(23, 59, 59, 999);
+                                                            return hireDate <= refDate;
+                                                        }).reduce((acc, e) => acc + e.weeklyHours, 0) * 4.33;
+
+                                                        return (
+                                                            <div key={label} className="bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow">
+                                                                <p className="text-[10px] font-black uppercase text-slate-400 mb-3">{label}</p>
+                                                                <p className="text-2xl font-black text-slate-800">{totalH.toFixed(0)}h</p>
+                                                                <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">Horas Contratadas</p>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </section>
+
+                                            <section>
+                                                <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Histórico Anual</h4>
+                                                <div className="bg-slate-50 border border-slate-100 rounded-[2rem] overflow-hidden">
+                                                    <table className="w-full text-left">
+                                                        <thead className="bg-slate-100/50 text-[10px] font-black uppercase text-slate-500">
+                                                            <tr>
+                                                                <th className="p-4">Año</th>
+                                                                <th className="p-4 text-center">Media Plantilla</th>
+                                                                <th className="p-4 text-right">Horas / Año</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-slate-100">
+                                                            {[2026, 2025, 2024].map(year => (
+                                                                <tr key={year} className="hover:bg-white transition-colors">
+                                                                    <td className="p-4 font-black text-slate-700">{year}</td>
+                                                                    <td className="p-4 text-center font-bold text-slate-500">{myEmployees.length} empleados</td>
+                                                                    <td className="p-4 text-right font-black text-emerald-600">
+                                                                        {(totalContractedHours * 52).toFixed(0)}h
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </section>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4 pr-2">
+                                            <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-2">Registro de Altas y Bajas</h4>
+                                            {employeeLogs
+                                                .filter(l => (l.type === 'hire' || l.type === 'termination') && l.establishmentId === user.establishmentId)
+                                                .map(log => (
+                                                    <div key={log.id} className="bg-slate-50 border border-slate-100 p-4 rounded-2xl flex items-center justify-between hover:border-emerald-200 transition-colors">
+                                                        <div className="flex items-center gap-4">
+                                                            <div className={clsx(
+                                                                "h-10 w-10 rounded-xl flex items-center justify-center shadow-sm",
+                                                                log.type === 'hire' ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-600"
+                                                            )}>
+                                                                {log.type === 'hire' ? <UserCheck size={20} /> : <UserX size={20} />}
+                                                            </div>
+                                                            <div>
+                                                                <p className="font-bold text-slate-900">{log.details}</p>
+                                                                <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">{new Date(log.date).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className={clsx(
+                                                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                                                            log.type === 'hire' ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
+                                                        )}>
+                                                            {log.type === 'hire' ? 'Alta' : 'Baja'}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            {employeeLogs.filter(l => (l.type === 'hire' || l.type === 'termination') && l.establishmentId === user.establishmentId).length === 0 && (
+                                                <div className="text-center py-12">
+                                                    <Activity className="mx-auto text-slate-200 mb-3" size={48} />
+                                                    <p className="text-slate-400 font-bold">No hay registros de movimientos de personal.</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )
+                }
+
+                {
+                    isCoverageSummaryOpen && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-3xl p-8 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-violet-50 rounded-bl-full -mr-20 -mt-20 opacity-50"></div>
+                                <div className="flex justify-between items-start mb-8 relative z-10">
+                                    <div>
+                                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                                            <Zap className="text-violet-500" size={28} /> Resumen de Cobertura
+                                        </h2>
+                                        <p className="text-slate-500 text-sm font-medium">Cumplimiento de horas contratadas por periodo.</p>
+                                    </div>
+                                    <button onClick={() => setIsCoverageSummaryOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-colors bg-slate-50 border border-slate-200 text-slate-600">
+                                        <X size={20} />
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 overflow-auto custom-scrollbar relative z-10 space-y-8">
+                                    <section>
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Cobertura por Meses</h4>
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                                            {monthlyStatsData.map(m => (
+                                                <div key={m.label} className="bg-slate-50 border border-slate-100 p-6 rounded-[2.5rem] relative overflow-hidden group">
+                                                    <div className="absolute top-0 right-0 h-1.5 w-full bg-slate-200">
+                                                        <div style={{ width: `${Math.min(m.coverage, 100)}%` }} className={clsx("h-full transition-all duration-1000", m.coverage >= 98 ? "bg-emerald-500" : m.coverage >= 90 ? "bg-violet-500" : "bg-amber-500")}></div>
+                                                    </div>
+                                                    <p className="text-[10px] font-black uppercase text-slate-400 mb-2 mt-2">{new Date(m.label + '-01').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</p>
+                                                    <p className="text-3xl font-black text-slate-800 mb-1">{m.coverage.toFixed(1)}%</p>
+                                                    <p className="text-[10px] font-bold text-slate-400">Target: {m.contracted.toFixed(0)}h</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+
+                                    <section>
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-2">Histórico Anual</h4>
+                                        <div className="space-y-3">
+                                            {yearlyStatsData.map(y => (
+                                                <div key={y.label} className="bg-white border border-slate-100 p-6 rounded-[2rem] flex items-center justify-between hover:shadow-md transition-shadow">
+                                                    <div className="flex items-center gap-6">
+                                                        <div className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center font-black text-slate-400">
+                                                            {y.label}
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-lg font-black text-slate-800">{y.coverage.toFixed(1)}% Cobertura Media</p>
+                                                            <p className="text-xs font-bold text-slate-400">Total Horas: {y.worked.toFixed(0)}h (Contratadas: {y.contracted.toFixed(0)}h)</p>
+                                                        </div>
+                                                    </div>
+                                                    <ChevronRight className="text-slate-300" />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                </div>
+                            </div>
+                        </div>
+                    )
+                }
+
+
+            </div>
+        </div>
     );
 };
 

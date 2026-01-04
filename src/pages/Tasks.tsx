@@ -731,90 +731,95 @@ export default function TasksPage() {
                 {/* Create/Edit Modal (Dark Theme redesign) */}
                 {isCreateModalOpen && (
                     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 overflow-y-auto custom-scrollbar pt-20 pb-20">
-                        <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 relative overflow-visible">
+                        <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] w-full max-w-4xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 relative overflow-visible">
                             <div className="px-8 py-5 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center rounded-t-[2.5rem]">
                                 <h2 className="text-xl font-black text-white tracking-tight">{editingTask ? 'Editar Tarea' : 'Nueva Tarea'}</h2>
                                 <button onClick={() => setIsCreateModalOpen(false)} className="text-slate-500 hover:text-white transition-colors"><X size={24} /></button>
                             </div>
 
-                            <form onSubmit={handleSubmit} className="p-7 space-y-6">
-                                <div className="space-y-5">
-                                    <div>
-                                        <label className="premium-label">Título de la Tarea</label>
-                                        <input
-                                            type="text"
-                                            required
-                                            value={formData.title}
-                                            onChange={e => setFormData({ ...formData, title: e.target.value })}
-                                            className="premium-input w-full"
-                                            placeholder="Ej: Revisar inventario de bebidas"
-                                        />
-                                    </div>
+                            <form onSubmit={handleSubmit} className="p-8">
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                    {/* Left Column: Basic Info & Description */}
+                                    <div className="space-y-6">
+                                        <div>
+                                            <label className="premium-label">Título de la Tarea</label>
+                                            <input
+                                                type="text"
+                                                required
+                                                value={formData.title}
+                                                onChange={e => setFormData({ ...formData, title: e.target.value })}
+                                                className="premium-input w-full"
+                                                placeholder="Ej: Revisar inventario de bebidas"
+                                            />
+                                        </div>
 
-                                    <div>
-                                        <label className="premium-label">Descripción / Instrucciones (Opcional)</label>
-                                        <textarea
-                                            rows={3}
-                                            value={formData.description}
-                                            onChange={e => setFormData({ ...formData, description: e.target.value })}
-                                            className="premium-input w-full resize-none font-medium h-24"
-                                            placeholder="Detalla qué deben hacer los gerentes..."
-                                        />
-                                    </div>
+                                        <div>
+                                            <label className="premium-label">Descripción / Instrucciones (Opcional)</label>
+                                            <textarea
+                                                rows={5}
+                                                value={formData.description}
+                                                onChange={e => setFormData({ ...formData, description: e.target.value })}
+                                                className="premium-input w-full resize-none font-medium h-40"
+                                                placeholder="Detalla qué deben hacer los gerentes..."
+                                            />
+                                        </div>
 
-                                    <div className="space-y-4">
-                                        <label className="premium-label">Prioridad</label>
-                                        <div className="grid grid-cols-4 gap-2">
-                                            {(['low', 'medium', 'high', 'critical'] as TaskPriority[]).map((p) => (
-                                                <button
-                                                    key={p}
-                                                    type="button"
-                                                    onClick={() => setFormData({ ...formData, priority: p })}
-                                                    className={clsx(
-                                                        "flex flex-col items-center gap-1.5 py-3 rounded-2xl border-2 transition-all duration-200",
-                                                        formData.priority === p
-                                                            ? (p === 'critical' ? 'bg-red-500/10 border-red-500 text-red-500' :
-                                                                p === 'high' ? 'bg-orange-500/10 border-orange-500 text-orange-500' :
-                                                                    p === 'medium' ? 'bg-amber-500/10 border-amber-500 text-amber-500' :
-                                                                        'bg-indigo-500/10 border-indigo-500 text-indigo-500')
-                                                            : "bg-slate-950 border-slate-800 text-slate-600 hover:border-slate-700"
-                                                    )}
-                                                >
-                                                    <AlertTriangle size={18} className={clsx(formData.priority === p ? "animate-pulse" : "opacity-40")} />
-                                                    <span className="text-[10px] font-black uppercase">{getPriorityLabel(p)}</span>
-                                                </button>
-                                            ))}
+                                        <div className="space-y-4">
+                                            <label className="premium-label">Tipo de Ejecución</label>
+                                            <div className="flex gap-3">
+                                                {[
+                                                    { id: 'specific_date', label: 'Específica', icon: Calendar },
+                                                    { id: 'cyclical', label: 'Recurrente', icon: RotateCcw }
+                                                ].map((t) => (
+                                                    <button
+                                                        key={t.id}
+                                                        type="button"
+                                                        onClick={() => setFormData({ ...formData, type: t.id as TaskType })}
+                                                        className={clsx(
+                                                            "flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl border-2 font-bold text-sm transition-all duration-200",
+                                                            formData.type === t.id
+                                                                ? "bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                                                                : "bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-700"
+                                                        )}
+                                                    >
+                                                        <t.icon size={18} />
+                                                        {t.label}
+                                                    </button>
+                                                ))}
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div className="space-y-4">
-                                        <label className="premium-label">Tipo de Ejecución</label>
-                                        <div className="flex gap-3">
-                                            {[
-                                                { id: 'specific_date', label: 'Específica', icon: Calendar },
-                                                { id: 'cyclical', label: 'Recurrente', icon: RotateCcw }
-                                            ].map((t) => (
-                                                <button
-                                                    key={t.id}
-                                                    type="button"
-                                                    onClick={() => setFormData({ ...formData, type: t.id as TaskType })}
-                                                    className={clsx(
-                                                        "flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl border-2 font-bold text-sm transition-all duration-200",
-                                                        formData.type === t.id
-                                                            ? "bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                                                            : "bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-700"
-                                                    )}
-                                                >
-                                                    <t.icon size={16} />
-                                                    {t.label}
-                                                </button>
-                                            ))}
+                                    {/* Right Column: Settings */}
+                                    <div className="space-y-6">
+                                        <div className="space-y-4">
+                                            <label className="premium-label">Prioridad</label>
+                                            <div className="grid grid-cols-4 gap-2">
+                                                {(['low', 'medium', 'high', 'critical'] as TaskPriority[]).map((p) => (
+                                                    <button
+                                                        key={p}
+                                                        type="button"
+                                                        onClick={() => setFormData({ ...formData, priority: p })}
+                                                        className={clsx(
+                                                            "flex flex-col items-center gap-2 py-3 rounded-2xl border-2 transition-all duration-200",
+                                                            formData.priority === p
+                                                                ? (p === 'critical' ? 'bg-red-500/10 border-red-500 text-red-500' :
+                                                                    p === 'high' ? 'bg-orange-500/10 border-orange-500 text-orange-500' :
+                                                                        p === 'medium' ? 'bg-amber-500/10 border-amber-500 text-amber-500' :
+                                                                            'bg-indigo-500/10 border-indigo-500 text-indigo-500')
+                                                                : "bg-slate-950 border-slate-800 text-slate-600 hover:border-slate-700"
+                                                        )}
+                                                    >
+                                                        <AlertTriangle size={20} className={clsx(formData.priority === p ? "animate-pulse" : "opacity-40")} />
+                                                        <span className="text-[10px] font-black uppercase">{getPriorityLabel(p)}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
 
-                                    <div className="bg-slate-950 p-6 rounded-3xl border border-slate-800">
-                                        {formData.type === 'specific_date' && (
-                                            <div className="space-y-4">
+                                        {/* Dynamic Settings Area */}
+                                        <div className="bg-slate-950 p-6 rounded-[2rem] border border-slate-800 space-y-6">
+                                            {formData.type === 'specific_date' && (
                                                 <div>
                                                     <label className="premium-label">Fecha de Inicio</label>
                                                     <DatePicker
@@ -822,132 +827,149 @@ export default function TasksPage() {
                                                         onChange={val => setFormData({ ...formData, date: val })}
                                                         required
                                                         variant="dark"
+                                                        className="w-full"
                                                     />
                                                 </div>
-                                            </div>
-                                        )}
-                                        {formData.type === 'cyclical' && (
-                                            <div className="space-y-4">
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    <FormSelect
-                                                        label="Unidad"
-                                                        value={formData.cycleUnit}
-                                                        onChange={val => setFormData({ ...formData, cycleUnit: val })}
-                                                        options={[
-                                                            { value: 'weeks', label: 'Semanas' },
-                                                            { value: 'months', label: 'Meses' }
-                                                        ]}
-                                                    />
-                                                    <PremiumNumberInput
-                                                        label="Freq."
-                                                        value={formData.cycleFrequency}
-                                                        onChange={val => setFormData({ ...formData, cycleFrequency: val })}
-                                                        placeholder="X"
-                                                    />
-                                                </div>
+                                            )}
 
-                                                {formData.cycleUnit === 'weeks' && (
-                                                    <FormSelect
-                                                        label="Día de la semana"
-                                                        value={formData.cyclicalDayOfWeek || 1}
-                                                        onChange={val => setFormData({ ...formData, cyclicalDayOfWeek: Number(val) })}
-                                                        options={[
-                                                            { value: 1, label: 'Lunes' },
-                                                            { value: 2, label: 'Martes' },
-                                                            { value: 3, label: 'Miércoles' },
-                                                            { value: 4, label: 'Jueves' },
-                                                            { value: 5, label: 'Viernes' },
-                                                            { value: 6, label: 'Sábado' },
-                                                            { value: 0, label: 'Domingo' }
-                                                        ]}
-                                                    />
-                                                )}
-
-                                                {formData.cycleUnit === 'months' && (
-                                                    <FormSelect
-                                                        label="Día del mes"
-                                                        value={formData.cyclicalDayOfMonth || 1}
-                                                        onChange={val => setFormData({ ...formData, cyclicalDayOfMonth: Number(val) })}
-                                                        options={Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: `Día ${i + 1}` }))}
-                                                    />
-                                                )}
-
-                                                <div className="flex items-center gap-3 text-slate-400 text-xs bg-indigo-500/10 p-3 rounded-lg border border-indigo-500/20">
-                                                    <Clock size={16} className="text-indigo-400" />
-                                                    <span>Esta tarea se activará automáticamente según la frecuencia configurada.</span>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <PremiumNumberInput
-                                            label="Duración de la tarea en días"
-                                            value={formData.durationDays}
-                                            onChange={val => setFormData({ ...formData, durationDays: val })}
-                                            min={1}
-                                            max={60}
-                                            placeholder="7"
-                                        />
-                                        <p className="text-[10px] text-slate-500 font-medium -mt-2 ml-1">Número de días que tienen las tiendas para completar la tarea desde que se activa.</p>
-
-                                        {formData.type === 'specific_date' && formData.date && (
-                                            <div className="flex items-center gap-3 text-slate-400 text-xs bg-indigo-500/10 p-3 rounded-2xl border border-indigo-500/20">
-                                                <Calendar size={16} className="text-indigo-400" />
-                                                <span className="font-bold">Fecha de finalización calculada: <span className="text-white ml-1">{new Date(new Date(formData.date).getTime() + ((formData.durationDays || 1) * 24 * 60 * 60 * 1000)).toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })}</span></span>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    <div>
-                                        <label className="premium-label">Asignación</label>
-                                        <label className="flex items-center gap-3 p-4 bg-slate-950 rounded-2xl border border-slate-800 cursor-pointer mb-4 hover:border-indigo-500/50 transition-colors group">
-                                            <div className={clsx("w-5 h-5 rounded border flex items-center justify-center transition-colors", formData.isAllStores ? "bg-indigo-600 border-indigo-600" : "border-slate-700 bg-slate-900")}>
-                                                {formData.isAllStores && <CheckSquare size={14} className="text-white" />}
-                                            </div>
-                                            <input
-                                                type="checkbox"
-                                                className="hidden"
-                                                checked={formData.isAllStores}
-                                                onChange={e => setFormData({ ...formData, isAllStores: e.target.checked })}
-                                            />
-                                            <span className="text-sm font-bold text-slate-300">Asignar a todas las tiendas (Global)</span>
-                                        </label>
-
-                                        {!formData.isAllStores && (
-                                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-950 p-4 rounded-2xl border border-slate-800 max-h-64 overflow-y-auto custom-scrollbar">
-                                                {allStores.map(store => (
-                                                    <div
-                                                        key={store.id}
-                                                        onClick={() => {
-                                                            if (formData.targetStores.includes(store.id)) {
-                                                                setFormData(prev => ({ ...prev, targetStores: prev.targetStores.filter(id => id !== store.id) }));
-                                                            } else {
-                                                                setFormData(prev => ({ ...prev, targetStores: [...prev.targetStores, store.id] }));
-                                                            }
-                                                        }}
-                                                        className={clsx("cursor-pointer p-3 rounded-xl border transition-all flex flex-col gap-2 relative overflow-hidden group select-none",
-                                                            formData.targetStores.includes(store.id)
-                                                                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
-                                                                : "bg-slate-900 border-slate-800 hover:border-slate-700"
-                                                        )}
-                                                    >
-                                                        <div className="flex justify-between items-start">
-                                                            <span className={clsx("font-bold text-[10px] uppercase tracking-wide truncate pr-2", formData.targetStores.includes(store.id) ? "text-white" : "text-slate-500")}>{store.name}</span>
-                                                            <div className={clsx("w-4 h-4 rounded border flex items-center justify-center transition-colors shadow-sm", formData.targetStores.includes(store.id) ? "bg-white border-white text-indigo-600" : "border-slate-700 bg-slate-950")}>
-                                                                {formData.targetStores.includes(store.id) && <CheckSquare size={10} />}
-                                                            </div>
-                                                        </div>
+                                            {formData.type === 'cyclical' && (
+                                                <div className="space-y-4">
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <FormSelect
+                                                            label="Unidad"
+                                                            value={formData.cycleUnit}
+                                                            onChange={val => setFormData({ ...formData, cycleUnit: val })}
+                                                            options={[
+                                                                { value: 'weeks', label: 'Semanas' },
+                                                                { value: 'months', label: 'Meses' }
+                                                            ]}
+                                                        />
+                                                        <PremiumNumberInput
+                                                            label="Freq."
+                                                            value={formData.cycleFrequency}
+                                                            onChange={val => setFormData({ ...formData, cycleFrequency: val })}
+                                                            placeholder="X"
+                                                        />
                                                     </div>
-                                                ))}
+
+                                                    {formData.cycleUnit === 'weeks' && (
+                                                        <FormSelect
+                                                            label="Día de la semana"
+                                                            value={formData.cyclicalDayOfWeek || 1}
+                                                            onChange={val => setFormData({ ...formData, cyclicalDayOfWeek: Number(val) })}
+                                                            options={[
+                                                                { value: 1, label: 'Lunes' },
+                                                                { value: 2, label: 'Martes' },
+                                                                { value: 3, label: 'Miércoles' },
+                                                                { value: 4, label: 'Jueves' },
+                                                                { value: 5, label: 'Viernes' },
+                                                                { value: 6, label: 'Sábado' },
+                                                                { value: 0, label: 'Domingo' }
+                                                            ]}
+                                                        />
+                                                    )}
+
+                                                    {formData.cycleUnit === 'months' && (
+                                                        <FormSelect
+                                                            label="Día del mes"
+                                                            value={formData.cyclicalDayOfMonth || 1}
+                                                            onChange={val => setFormData({ ...formData, cyclicalDayOfMonth: Number(val) })}
+                                                            options={Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: `Día ${i + 1}` }))}
+                                                        />
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            <div>
+                                                <div className="flex justify-between items-baseline mb-2">
+                                                    <label className="premium-label !mb-0">Plazo ejecución (Días)</label>
+                                                    <span className="text-2xl font-black text-white">{formData.durationDays}</span>
+                                                </div>
+                                                <input
+                                                    type="range"
+                                                    min={1}
+                                                    max={30}
+                                                    value={formData.durationDays}
+                                                    onChange={e => setFormData({ ...formData, durationDays: Number(e.target.value) })}
+                                                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                                                />
+                                                {formData.type === 'specific_date' && formData.date && (
+                                                    <div className="text-[10px] font-bold text-slate-500 text-right mt-2">
+                                                        Vence el: <span className="text-indigo-400">{new Date(new Date(formData.date).getTime() + ((formData.durationDays || 1) * 24 * 60 * 60 * 1000)).toLocaleDateString('es-ES')}</span>
+                                                    </div>
+                                                )}
                                             </div>
-                                        )}
+                                        </div>
+
+                                        <div>
+                                            <label className="premium-label">Asignación</label>
+                                            <button
+                                                type="button"
+                                                onClick={() => setFormData((prev) => ({ ...prev, isAllStores: !prev.isAllStores, targetStores: [] }))}
+                                                className={clsx(
+                                                    "w-full flex items-center gap-4 px-6 py-4 rounded-2xl border-2 transition-all group",
+                                                    formData.isAllStores
+                                                        ? "bg-emerald-500/10 border-emerald-500 text-emerald-500"
+                                                        : "bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-700"
+                                                )}
+                                            >
+                                                <div className={clsx(
+                                                    "w-6 h-6 rounded-lg flex items-center justify-center border-2 transition-colors",
+                                                    formData.isAllStores
+                                                        ? "bg-emerald-500 border-emerald-500 text-slate-950"
+                                                        : "border-slate-600 group-hover:border-slate-500"
+                                                )}>
+                                                    {formData.isAllStores && <CheckSquare size={14} strokeWidth={4} />}
+                                                </div>
+                                                <span className="font-bold text-sm">Asignar a todas las tiendas (Global)</span>
+                                            </button>
+
+                                            {!formData.isAllStores && (
+                                                <div className="mt-4 p-4 bg-slate-950 border border-slate-800 rounded-2xl grid grid-cols-2 gap-3 max-h-40 overflow-y-auto custom-scrollbar">
+                                                    {settings.map(s => {
+                                                        const isSelected = formData.targetStores.includes(s.establishmentId);
+                                                        return (
+                                                            <button
+                                                                key={s.establishmentId}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setFormData(prev => ({
+                                                                        ...prev,
+                                                                        targetStores: isSelected
+                                                                            ? prev.targetStores.filter(id => id !== s.establishmentId)
+                                                                            : [...prev.targetStores, s.establishmentId]
+                                                                    }));
+                                                                }}
+                                                                className={clsx(
+                                                                    "px-3 py-2 rounded-xl text-xs font-bold transition-all border text-left truncate",
+                                                                    isSelected
+                                                                        ? "bg-indigo-600 text-white border-indigo-500 shadow-md"
+                                                                        : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800"
+                                                                )}
+                                                            >
+                                                                {s.storeName || `Tienda ${s.establishmentId}`}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div className="flex gap-4 pt-4">
-                                    <button type="button" onClick={() => setIsCreateModalOpen(false)} className="flex-1 py-4 text-slate-500 font-bold hover:text-white hover:bg-slate-800 rounded-2xl transition-all">Cancelar</button>
-                                    <button type="submit" className="flex-[2] py-4 bg-indigo-600 text-white font-black rounded-2xl hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 transition-all transform active:scale-95 uppercase tracking-widest text-xs">
+                                <div className="mt-8 flex justify-end gap-4 pt-6 border-t border-slate-800">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsCreateModalOpen(false)}
+                                        className="px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest text-slate-400 hover:text-white hover:bg-slate-800 transition-all"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        className="px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 active:scale-95 transition-all flex items-center gap-2"
+                                    >
+                                        <PlayCircle size={18} />
                                         {editingTask ? 'Guardar Cambios' : 'Lanzar Tarea'}
                                     </button>
                                 </div>

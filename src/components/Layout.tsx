@@ -8,9 +8,11 @@ import clsx from 'clsx';
 
 const Layout = () => {
     const { user, logout } = useAuth();
-    const { getSettings, tasks, timeOffRequests, schedules, incentiveReports } = useStore();
+    const { getSettings, tasks, timeOffRequests, schedules, incentiveReports, getManagerNames } = useStore();
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const location = useLocation();
+
+
 
     // Check for urgent tasks (Priority based or Overdue)
     const hasUrgentTasks = tasks.some(t => {
@@ -89,7 +91,7 @@ const Layout = () => {
     if (!user) return null;
 
     const settings = getSettings(user.establishmentId);
-    const displayName = settings.managerName || user.name;
+    const displayName = getManagerNames(user.establishmentId) || settings.managerName || user.name;
 
     // Role-based Layout Settings
     const isSupervisor = user.role === 'admin';
@@ -181,9 +183,17 @@ const Layout = () => {
                                         strokeWidth={isActive ? 2.5 : 2}
                                         className={clsx(
                                             "relative z-10 transition-transform duration-300",
-                                            isActive ? "scale-105" : "group-hover:scale-110"
+                                            isActive ? "scale-105" : "group-hover:scale-110",
+                                            (item as any).isUrgent && "animate-bounce"
                                         )}
                                     />
+
+                                    {/* Notification Dot for Urgent/Highlighted Items */}
+                                    {(item as any).isUrgent && !isActive && (
+                                        <div className="absolute top-3 right-3 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-white shadow-sm z-20">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                                        </div>
+                                    )}
 
                                     {/* Label (Expanded mode) */}
                                     {sidebarOpen && (
@@ -196,20 +206,22 @@ const Layout = () => {
                 </nav>
 
                 <div className={clsx("p-5 mt-auto border-t flex flex-col items-center gap-4", isDarkMode ? "border-slate-800" : "border-slate-100/50")}>
-                    <NavLink
-                        to="/settings"
-                        title={!sidebarOpen ? 'Configuración' : undefined}
-                        className={({ isActive }) => clsx(
-                            "relative flex items-center justify-center transition-all duration-300 group cursor-pointer",
-                            sidebarOpen ? "w-full px-5 py-3 rounded-2xl gap-3 justify-start" : "w-12 h-12 rounded-2xl",
-                            isActive
-                                ? (isDarkMode ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30" : "bg-slate-100 text-indigo-600 border border-slate-200")
-                                : (isDarkMode ? "text-slate-400 hover:text-indigo-300" : "text-slate-500 hover:text-indigo-600")
-                        )}
-                    >
-                        <Settings size={20} />
-                        {sidebarOpen && <span className="font-bold text-sm">Configuración</span>}
-                    </NavLink>
+                    {!isSupervisor && (
+                        <NavLink
+                            to="/settings"
+                            title={!sidebarOpen ? 'Configuración' : undefined}
+                            className={({ isActive }) => clsx(
+                                "relative flex items-center justify-center transition-all duration-300 group cursor-pointer",
+                                sidebarOpen ? "w-full px-5 py-3 rounded-2xl gap-3 justify-start" : "w-12 h-12 rounded-2xl",
+                                isActive
+                                    ? (isDarkMode ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30" : "bg-slate-100 text-indigo-600 border border-slate-200")
+                                    : (isDarkMode ? "text-slate-400 hover:text-indigo-300" : "text-slate-500 hover:text-indigo-600")
+                            )}
+                        >
+                            <Settings size={20} />
+                            {sidebarOpen && <span className="font-bold text-sm">Configuración</span>}
+                        </NavLink>
+                    )}
 
                     <button
                         onClick={logout}

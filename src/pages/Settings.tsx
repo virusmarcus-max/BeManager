@@ -13,7 +13,7 @@ import { clsx } from 'clsx';
 
 const SettingsPage: React.FC = () => {
     const { user } = useAuth();
-    const { getSettings, updateSettings } = useStore();
+    const { getSettings, updateSettings, settings } = useStore();
 
     if (!user) return null;
 
@@ -25,7 +25,7 @@ const SettingsPage: React.FC = () => {
 
     useEffect(() => {
         setFormData(getSettings(user.establishmentId));
-    }, [user.establishmentId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [user.establishmentId, settings]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleChange = (field: keyof StoreSettings, value: any) => {
         setFormData(prev => ({ ...prev, [field]: value }));

@@ -70,7 +70,7 @@ export const FilterSelect: React.FC<FilterSelectProps> = ({ options, value, onCh
                         <span className={clsx("text-xs font-black truncate transition-colors",
                             isOpen
                                 ? (isDark ? "text-white" : "text-indigo-900")
-                                : (isDark ? "text-slate-700" : "text-slate-700")
+                                : (isDark ? "text-slate-200" : "text-slate-700")
                         )}>
                             {selectedOption ? selectedOption.label : "Seleccionar..."}
                         </span>

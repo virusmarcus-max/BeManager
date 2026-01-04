@@ -7,12 +7,12 @@ import {
 } from 'lucide-react';
 import type { WeeklySchedule } from '../types';
 import clsx from 'clsx';
-import { validatePermanentRestrictions, validateRegisterCoverage } from '../services/scheduler';
+import { validateFullSchedule } from '../services/scheduler';
 import { FilterSelect } from '../components/FilterSelect';
 import { DEFAULT_STORE_NAMES } from '../services/storeConfig';
 
 const SupervisionPage: React.FC = () => {
-    const { schedules, employees, updateScheduleStatus, settings, permanentRequests, respondToModificationRequest } = useStore();
+    const { schedules, employees, updateScheduleStatus, settings, permanentRequests, respondToModificationRequest, timeOffRequests } = useStore();
 
     // UI State
     const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
@@ -189,19 +189,22 @@ const SupervisionPage: React.FC = () => {
 
 
     const handleValidate = (schedule: WeeklySchedule) => {
-        const strictWarnings = validatePermanentRestrictions(schedule, permanentRequests, employees, false);
         const storeSettings = settings.find(s => s.establishmentId === schedule.establishmentId);
-        let regWarnings: string[] = [];
-        if (storeSettings) {
-            regWarnings = validateRegisterCoverage(schedule, storeSettings);
-        }
+        if (!storeSettings) return;
 
-        const debtAdjustments: any[] = []; // Simplified for this view, logic exists in previous version if needed strictly
+        const results = validateFullSchedule(
+            schedule,
+            employees, // Pass full list, function filters by store
+            storeSettings,
+            timeOffRequests,
+            permanentRequests,
+            'publish' // Supervisor always validates as if publishing/final check
+        );
 
         setValidationResults({
-            strictWarnings: [...strictWarnings, ...regWarnings],
-            coverageWarnings: [],
-            debtAdjustments
+            strictWarnings: results.strictWarnings,
+            coverageWarnings: [], // Already included in strictWarnings by validateFullSchedule if customized
+            debtAdjustments: results.debtAdjustments
         });
         setIsValidationModalOpen(true);
     };
@@ -324,6 +327,7 @@ const SupervisionPage: React.FC = () => {
                                     onChange={setFilterStore}
                                     placeholder="Filtrar por Tienda"
                                     icon={Store}
+                                    theme="dark"
                                 />
                                 <FilterSelect
                                     options={yearOptions}
@@ -331,6 +335,7 @@ const SupervisionPage: React.FC = () => {
                                     onChange={setFilterYear}
                                     placeholder="Filtrar por Año"
                                     icon={Calendar}
+                                    theme="dark"
                                 />
                                 <FilterSelect
                                     options={monthOptions}
@@ -338,6 +343,7 @@ const SupervisionPage: React.FC = () => {
                                     onChange={setFilterMonth}
                                     placeholder="Filtrar por Mes"
                                     icon={Calendar}
+                                    theme="dark"
                                 />
                             </div>
 
@@ -736,6 +742,36 @@ const SupervisionPage: React.FC = () => {
                             </div>
                         )}
 
+                        {validationResults.debtAdjustments.length > 0 && (
+                            <div className="mt-6">
+                                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Ajustes de Horas (Deuda/Extras)</h4>
+                                <div className="bg-slate-950/50 border border-slate-800 rounded-xl overflow-hidden">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="bg-slate-900 text-slate-400 font-bold border-b border-slate-800">
+                                            <tr>
+                                                <th className="px-4 py-3">Empleado</th>
+                                                <th className="px-4 py-3 text-center">Objetivo</th>
+                                                <th className="px-4 py-3 text-center">Real</th>
+                                                <th className="px-4 py-3 text-right">Dif</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-800 text-slate-300">
+                                            {validationResults.debtAdjustments.map((adj, i) => (
+                                                <tr key={i} className="hover:bg-slate-900/50">
+                                                    <td className="px-4 py-3 font-medium">{adj.name}</td>
+                                                    <td className="px-4 py-3 text-center text-slate-500">{adj.contract}h</td>
+                                                    <td className="px-4 py-3 text-center text-slate-400">{adj.worked}h</td>
+                                                    <td className={clsx("px-4 py-3 text-right font-bold", adj.amount > 0 ? "text-emerald-400" : "text-rose-400")}>
+                                                        {adj.amount > 0 ? '+' : ''}{adj.amount}h
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex justify-end">
                             <button onClick={() => setIsValidationModalOpen(false)} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors">
                                 Entendido
@@ -743,9 +779,10 @@ const SupervisionPage: React.FC = () => {
                         </div>
                     </div>
                 </div>
-            )}
+            )
+            }
 
-        </div>
+        </div >
     );
 };
 

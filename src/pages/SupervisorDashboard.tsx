@@ -3,15 +3,25 @@ import { useStore } from '../context/StoreContext';
 import { formatLocalDate, parseLocalDate } from '../services/dateUtils';
 import clsx from 'clsx';
 import {
-    Users, Calendar, Clock, ArrowRight, Activity, TrendingUp, TrendingDown,
-    LayoutGrid, Building2, Package, CheckCircle2, ChevronRight, FileText, Search,
-    Store, X, ChevronLeft, ArrowLeft, CalendarDays, Info, Printer, CheckSquare, ArrowUpRight
+    Users, Activity, TrendingUp, Building2,
+    ChevronRight, FileText, Store, X, ChevronLeft, ArrowLeft,
+    CalendarDays, Info, Printer, CheckSquare, ArrowUpRight,
+    Bell, AlertTriangle, Coins
 } from 'lucide-react';
 import { DEFAULT_STORE_NAMES } from '../services/storeConfig';
 
 const SupervisorDashboard: React.FC = () => {
-    const { schedules, employees, settings, timeOffRequests, tasks } = useStore();
+    const { schedules, employees, settings, timeOffRequests, tasks, notifications, removeNotification, incentiveReports } = useStore();
     const [selectedStore, setSelectedStore] = React.useState<any>(null);
+    const [isNotificationsOpen, setIsNotificationsOpen] = React.useState(false);
+
+    // Task Summary Modal State
+    const [isTaskSummaryModalOpen, setIsTaskSummaryModalOpen] = React.useState(false);
+
+    // Microloans Modal State
+    const [isMicroloansModalOpen, setIsMicroloansModalOpen] = React.useState(false);
+    const [microloansFilterStore, setMicroloansFilterStore] = React.useState('all');
+    const [microloansFilterYear, setMicroloansFilterYear] = React.useState(new Date().getFullYear());
     const [dashboardView, setDashboardView] = React.useState<'dashboard' | 'report'>('dashboard');
     const [reportYear, setReportYear] = React.useState(new Date().getFullYear());
     const [reportStoreId, setReportStoreId] = React.useState<string>('all');
@@ -277,39 +287,51 @@ const SupervisorDashboard: React.FC = () => {
     const getAnnualData = (year: number, filterStoreId: string) => {
         const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
         return monthNames.map((name, monthIdx) => {
-            const endDate = new Date(year, monthIdx + 1, 0);
             const monthWeeks = schedules.filter(s => {
                 const d = parseLocalDate(s.weekStartDate);
                 const matchesStore = filterStoreId === 'all' || s.establishmentId === filterStoreId;
-                return d.getFullYear() === year && d.getMonth() === monthIdx && matchesStore;
+                return d.getFullYear() === year && d.getMonth() === monthIdx && matchesStore && s.status === 'published';
             });
             let totalWorked = 0, totalContracted = 0, totalVacation = 0, totalSick = 0, coverageSum = 0, weeksWithData = 0;
             const relevantEmps = employees.filter(e => e.active && (filterStoreId === 'all' || e.establishmentId === filterStoreId));
+
             monthWeeks.forEach(s => {
+                // Calculate week dates for overlap check
+                const weekDates = Array.from({ length: 7 }, (_, i) => {
+                    const d = parseLocalDate(s.weekStartDate);
+                    d.setDate(d.getDate() + i);
+                    return formatLocalDate(d);
+                });
+
                 const worked = s.shifts.reduce((acc, shift) => acc + getShiftHours(shift, s.establishmentId), 0);
+
                 let weekContracted = 0;
                 relevantEmps.filter(e => e.establishmentId === s.establishmentId).forEach(e => {
                     let c = e.weeklyHours;
                     const adj = e.tempHours?.find(t => s.weekStartDate >= t.start && s.weekStartDate <= t.end);
                     if (adj) c += adj.hours;
                     weekContracted += c;
+
+                    // Calculate Week Sick/Vacation for this employee in this week
+                    const empRequests = timeOffRequests.filter(r => r.employeeId === e.id && r.status === 'approved' && r.dates && Array.isArray(r.dates));
+
+                    let sickDays = 0;
+                    let vacationDays = 0;
+                    empRequests.forEach(r => {
+                        const matchCount = r.dates!.filter(d => weekDates.includes(d)).length;
+                        if (r.type === 'sick_leave') sickDays += matchCount;
+                        if (r.type === 'vacation') vacationDays += matchCount;
+                    });
+
+                    if (sickDays > 0) totalSick += (e.weeklyHours / 5) * Math.min(5, sickDays);
+                    if (vacationDays > 0) totalVacation += (e.weeklyHours / 5) * Math.min(5, vacationDays);
                 });
+
                 totalWorked += worked;
                 totalContracted += weekContracted;
                 if (weekContracted > 0) { coverageSum += (worked / weekContracted) * 100; weeksWithData++; }
             });
-            const monthDates = Array.from({ length: endDate.getDate() }, (_, i) => formatLocalDate(new Date(year, monthIdx, i + 1)));
-            timeOffRequests.filter(r => r.status === 'approved' && r.dates && Array.isArray(r.dates) && (filterStoreId === 'all' || employees.find(e => e.id === r.employeeId)?.establishmentId === filterStoreId)).forEach(r => {
-                const daysInMonth = (r.dates || []).filter(d => monthDates.includes(d)).length;
-                if (daysInMonth > 0) {
-                    const emp = employees.find(e => e.id === r.employeeId);
-                    if (emp) {
-                        const hours = (emp.weeklyHours / 5) * daysInMonth;
-                        if (r.type === 'sick_leave') totalSick += hours;
-                        if (r.type === 'vacation') totalVacation += hours;
-                    }
-                }
-            });
+
             return { name, worked: totalWorked, contracted: totalContracted, sick: totalSick, vacation: totalVacation, coverage: weeksWithData > 0 ? coverageSum / weeksWithData : 0 };
         });
     };
@@ -319,7 +341,7 @@ const SupervisorDashboard: React.FC = () => {
 
     const getAnnualEmployeeData = (year: number, filterStoreId: string) => {
         const relevantEmps = employees.filter(e => (filterStoreId === 'all' || e.establishmentId === filterStoreId) && e.active);
-        const yearSchedules = schedules.filter(s => s.weekStartDate.startsWith(year.toString()));
+        const yearSchedules = schedules.filter(s => s.weekStartDate.startsWith(year.toString()) && s.status === 'published');
         return relevantEmps.map(emp => {
             let totalWorked = 0, totalSick = 0, totalContracted = 0;
             yearSchedules.forEach(s => {
@@ -330,11 +352,21 @@ const SupervisorDashboard: React.FC = () => {
                     const adj = emp.tempHours?.find(t => s.weekStartDate >= t.start && s.weekStartDate <= t.end);
                     if (adj) c += adj.hours;
                     totalContracted += c;
+
+                    // Calculate Week Sick for this employee
+                    const weekDates = Array.from({ length: 7 }, (_, i) => {
+                        const d = parseLocalDate(s.weekStartDate);
+                        d.setDate(d.getDate() + i);
+                        return formatLocalDate(d);
+                    });
+
+                    const sickRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'sick_leave' && r.status === 'approved' && r.dates);
+                    let days = 0;
+                    sickRequests.forEach(r => {
+                        days += r.dates!.filter(d => weekDates.includes(d)).length;
+                    });
+                    if (days > 0) totalSick += (emp.weeklyHours / 5) * Math.min(5, days);
                 }
-            });
-            timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'sick_leave' && r.status === 'approved' && r.dates && Array.isArray(r.dates) && r.dates.some(d => d.startsWith(year.toString()))).forEach(r => {
-                const yearDates = (r.dates || []).filter(d => d.startsWith(year.toString()));
-                totalSick += (emp.weeklyHours / 5) * yearDates.length;
             });
             return { id: emp.id, name: emp.name, category: emp.category, worked: totalWorked, sick: totalSick, contracted: totalContracted };
         }).sort((a, b) => b.worked - a.worked);
@@ -370,6 +402,84 @@ const SupervisorDashboard: React.FC = () => {
         }
         return false;
     }).length;
+
+    // Microloans / Captación Logic
+    const prevMonthDate = new Date();
+    prevMonthDate.setMonth(prevMonthDate.getMonth() - 1);
+    const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    const yearMonthLabel = prevMonthDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+
+    // 1. Store Totals for Previous Month
+    const microloansStoreStats = storeIds.map(id => {
+        const report = incentiveReports.find(r => r.establishmentId === id && r.month === prevMonthStr);
+        const total = (report?.items || []).reduce((acc, item) => acc + (item.micros_aptacion_qty || 0), 0);
+        return { id, name: getStoreName(id), total, hasReport: !!report };
+    }).sort((a, b) => b.total - a.total);
+
+    const totalMicroloansGlobal = microloansStoreStats.reduce((acc, s) => acc + s.total, 0);
+
+    // 2. Global Employee Ranking for Previous Month
+    const microloansGlobalRanking = (() => {
+        const allItems: { name: string; count: number; storeName: string; category: string }[] = [];
+        storeIds.forEach(id => {
+            const report = incentiveReports.find(r => r.establishmentId === id && r.month === prevMonthStr);
+            if (report) {
+                report.items.forEach(item => {
+                    if ((item.micros_aptacion_qty || 0) > 0) {
+                        allItems.push({
+                            name: item.employeeName,
+                            count: item.micros_aptacion_qty || 0,
+                            storeName: getStoreName(id),
+                            category: employees.find(e => e.id === item.employeeId)?.category || 'Empleado'
+                        });
+                    }
+                });
+            }
+        });
+        return allItems.sort((a, b) => b.count - a.count).slice(0, 10); // Top 10
+        return allItems.sort((a, b) => b.count - a.count).slice(0, 10); // Top 10
+    })();
+
+    // 3. Monthly Global Evolution (Last 6 Months)
+    const microloansMonthlyEvolution = React.useMemo(() => {
+        return Array.from({ length: 6 }).map((_, i) => {
+            const d = new Date();
+            d.setMonth(d.getMonth() - i);
+            const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            // Sum of all reports for this month across all stores
+            const total = incentiveReports
+                .filter(r => r.month === mStr)
+                .reduce((acc, r) => acc + (r.items || []).reduce((sum, item) => sum + (item.micros_aptacion_qty || 0), 0), 0);
+
+            return {
+                month: d.toLocaleDateString('es-ES', { month: 'long' }),
+                total,
+                mStr
+            };
+        }).reverse();
+    }, [incentiveReports]);
+
+    // 4. Modal Data Calculation
+    const microloansModalData = React.useMemo(() => {
+        const months = Array.from({ length: 12 }, (_, i) => i);
+        return months.map(monthIndex => {
+            const d = new Date(microloansFilterYear, monthIndex, 1);
+            const mStr = `${microloansFilterYear}-${String(monthIndex + 1).padStart(2, '0')}`;
+
+            // Filter reports
+            const reports = incentiveReports.filter(r =>
+                r.month === mStr &&
+                (microloansFilterStore === 'all' || r.establishmentId === microloansFilterStore)
+            );
+
+            const total = reports.reduce((acc, r) => acc + (r.items || []).reduce((sum, item) => sum + (item.micros_aptacion_qty || 0), 0), 0);
+
+            return {
+                label: d.toLocaleDateString('es-ES', { month: 'long' }),
+                total
+            };
+        });
+    }, [incentiveReports, microloansFilterStore, microloansFilterYear]);
 
     const MetricCard: React.FC<{ title: string; value: string | number; icon: any; color: string; bg: string; label: string; children?: React.ReactNode }> = ({ title, value, icon: Icon, color, bg, label, children }) => (
         <div className={clsx("relative p-6 rounded-3xl border border-slate-800 shadow-2xl overflow-hidden min-h-[160px] flex flex-col justify-between metric-card-content", bg)}>
@@ -634,6 +744,57 @@ const SupervisorDashboard: React.FC = () => {
                     <button onClick={() => setDashboardView('report')} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-2xl shadow-lg shadow-indigo-600/20 transition-all active:scale-95 flex items-center gap-2 text-xs uppercase tracking-widest border border-indigo-500/30">
                         <FileText size={16} /> Informe Anual
                     </button>
+
+                    <div className="relative">
+                        <button
+                            onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+                            className={clsx("h-12 w-12 rounded-2xl flex items-center justify-center border transition-all shadow-lg backdrop-blur-md",
+                                notifications.filter(n => n.establishmentId === 'admin').length > 0
+                                    ? "bg-rose-500/20 border-rose-500/40 text-rose-400 animate-pulse hover:bg-rose-500/30"
+                                    : "bg-slate-900/40 border-slate-800 text-slate-500 hover:text-indigo-400 hover:bg-slate-800"
+                            )}
+                        >
+                            <Bell size={20} />
+                            {notifications.filter(n => n.establishmentId === 'admin').length > 0 && (
+                                <span className="absolute -top-1 -right-1 h-5 w-5 bg-rose-500 text-white flex items-center justify-center rounded-full text-[10px] font-black shadow-lg">
+                                    {notifications.filter(n => n.establishmentId === 'admin').length}
+                                </span>
+                            )}
+                        </button>
+
+                        {isNotificationsOpen && (
+                            <div className="absolute right-0 mt-4 w-[350px] bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl z-50 p-6 animate-in slide-in-from-top-4 fade-in duration-200">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Notificaciones Avisos</h3>
+                                    <button onClick={() => setIsNotificationsOpen(false)} className="p-2 hover:bg-slate-800 rounded-xl text-slate-500"><X size={16} /></button>
+                                </div>
+                                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                                    {notifications.filter(n => n.establishmentId === 'admin').length === 0 ? (
+                                        <p className="text-slate-600 text-center py-8 text-xs font-bold uppercase tracking-widest leading-loose tabular-nums">Todo bajo control ✨</p>
+                                    ) : (
+                                        notifications.filter(n => n.establishmentId === 'admin').map(alert => (
+                                            <div key={alert.id} className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/50 flex gap-4 group/notif">
+                                                <div className={clsx("p-2 rounded-xl h-fit",
+                                                    alert.type === 'error' ? "bg-rose-500/20 text-rose-500" :
+                                                        alert.type === 'warning' ? "bg-amber-500/20 text-amber-500" : "bg-indigo-500/20 text-indigo-500")}>
+                                                    <AlertTriangle size={16} />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-[11px] font-bold text-slate-200 leading-snug mb-2">{alert.message}</p>
+                                                    <button
+                                                        onClick={() => removeNotification(alert.id)}
+                                                        className="text-[10px] font-black text-indigo-400 uppercase tracking-widest hover:text-indigo-300 transition-colors"
+                                                    >
+                                                        Cerrar Aviso
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -690,32 +851,172 @@ const SupervisorDashboard: React.FC = () => {
                 </MetricCard>
             </div>
 
-            {/* Task Summary Banner (Dark Mode) */}
-            <div className="mb-8 bg-slate-900/40 border border-slate-800 rounded-[2.5rem] p-8 relative overflow-hidden shadow-2xl">
-                <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-[100px] -mr-20 -mt-20 opacity-50"></div>
-                <h3 className="text-xl font-black text-white mb-6 flex items-center gap-3 relative z-10 w-full">
-                    <CheckSquare size={24} className="text-indigo-400" /> Resumen de Tareas Activas
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
-                    <div className="bg-slate-950/50 rounded-2xl p-5 border border-slate-800/50 flex items-center gap-4">
-                        <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl"><CheckSquare size={24} /></div>
-                        <div>
-                            <p className="text-xs font-bold text-slate-500 uppercase">Activas</p>
-                            <p className="text-2xl font-black text-white">{activeTasks.length}</p>
+            {/* Split Row: Tasks & Microloans */}
+            {/* Split Row: Tasks & Microloans */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8 text-left">
+                {/* Task Summary Banner (Compact) */}
+                <div onClick={() => setIsTaskSummaryModalOpen(true)} className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-[2.5rem] p-6 relative overflow-hidden shadow-2xl flex flex-col justify-between min-w-0 group hover:border-indigo-500/30 transition-colors duration-500 cursor-pointer">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-[80px] -mr-16 -mt-16 opacity-0 group-hover:opacity-40 transition-opacity duration-700"></div>
+
+                    <div className="mb-6 relative z-10">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="p-2 bg-indigo-500/10 rounded-xl text-indigo-400">
+                                <CheckSquare size={20} />
+                            </div>
+                            <ArrowUpRight size={16} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                        </div>
+                        <h3 className="text-lg font-black text-white tracking-tight">Resumen Tareas</h3>
+                        <p className="text-xs text-slate-500 font-medium">Estado de actividades</p>
+                    </div>
+
+                    <div className="space-y-3 relative z-10">
+                        <div className="bg-slate-950/50 p-3 rounded-2xl border border-slate-800 flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-400">Activas</span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-indigo-500 text-[10px] uppercase font-black tracking-wider">Total</span>
+                                <span className="text-xl font-black text-white bg-indigo-500/10 px-2 py-0.5 rounded-lg border border-indigo-500/20">{activeTasks.length}</span>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-950/50 p-3 rounded-2xl border border-slate-800 flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-400">Progreso</span>
+                            <div className="flex items-center gap-2">
+                                <div className="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                    <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${taskCompletionRate}%` }}></div>
+                                </div>
+                                <span className="text-sm font-black text-emerald-400">{taskCompletionRate.toFixed(0)}%</span>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-950/50 p-3 rounded-2xl border border-slate-800 flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-400">Urgentes</span>
+                            <span className={clsx("text-xl font-black px-2 py-0.5 rounded-lg border", urgentTasksCount > 0 ? "text-rose-400 bg-rose-500/10 border-rose-500/20" : "text-slate-600 bg-slate-800 border-transparent")}>
+                                {urgentTasksCount}
+                            </span>
                         </div>
                     </div>
-                    <div className="bg-slate-950/50 rounded-2xl p-5 border border-slate-800/50 flex items-center gap-4">
-                        <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-xl"><Activity size={24} /></div>
+                </div>
+
+                {/* Microloans Card (New) */}
+                <div onClick={() => setIsMicroloansModalOpen(true)} className="lg:col-span-9 bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 relative overflow-hidden shadow-2xl flex flex-col justify-between cursor-pointer hover:border-sky-500/30 transition-all duration-500 group/micro">
+
+                    {/* Background Effects */}
+                    <div className="absolute bottom-0 left-0 w-96 h-96 bg-sky-500/5 rounded-full blur-[100px] -ml-20 -mb-20 opacity-0 group-hover/micro:opacity-100 transition-opacity duration-1000"></div>
+                    <div className="absolute top-8 right-8 text-sky-500/20 group-hover/micro:text-sky-400 transition-colors">
+                        <ArrowUpRight size={28} />
+                    </div>
+
+                    {/* Header */}
+                    <div className="flex items-end gap-6 mb-8 relative z-10">
+                        <div className="p-4 bg-sky-500/10 rounded-2xl text-sky-400 border border-sky-500/20">
+                            <Coins size={32} />
+                        </div>
                         <div>
-                            <p className="text-xs font-bold text-slate-500 uppercase">Progreso Global</p>
-                            <p className="text-2xl font-black text-white">{taskCompletionRate.toFixed(0)}%</p>
+                            <p className="text-xs text-sky-500 font-black uppercase tracking-widest mb-1">Microcréditos</p>
+                            <h3 className="text-3xl font-black text-white tracking-tight leading-none mb-1">Captación Clientes</h3>
+                            <p className="text-sm text-slate-500 font-bold capitalize">{yearMonthLabel}</p>
+                        </div>
+                        <div className="ml-auto flex flex-col items-end">
+                            <div className="text-5xl font-black text-white tracking-tighter drop-shadow-lg">
+                                {totalMicroloansGlobal}
+                            </div>
+                            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Total Global</span>
                         </div>
                     </div>
-                    <div className="bg-slate-950/50 rounded-2xl p-5 border border-slate-800/50 flex items-center gap-4">
-                        <div className="p-3 bg-rose-500/10 text-rose-400 rounded-xl"><Clock size={24} /></div>
-                        <div>
-                            <p className="text-xs font-bold text-slate-500 uppercase">Urgentes Hoy</p>
-                            <p className="text-2xl font-black text-white">{urgentTasksCount}</p>
+
+                    <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-8 relative z-10 min-h-0 border-t border-slate-800 pt-6">
+                        {/* Store Breakdown */}
+                        <div className="space-y-4 pr-2">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Store size={14} className="text-slate-500" />
+                                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Por Tienda</p>
+                            </div>
+                            <div className="space-y-3 overflow-y-auto custom-scrollbar max-h-[160px] pr-2">
+                                {microloansStoreStats.map((store, i) => (
+                                    <div key={store.id} className="relative group/item">
+                                        <div className="flex justify-between items-center text-xs relative z-10 mb-1">
+                                            <span className={clsx("font-bold truncate max-w-[120px]", store.hasReport ? "text-slate-200" : "text-slate-600")}>
+                                                {store.name}
+                                            </span>
+                                            <span className={clsx("font-black", store.total > 0 ? "text-sky-300" : "text-slate-700")}>
+                                                {store.total}
+                                            </span>
+                                        </div>
+                                        <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                                            <div
+                                                className={clsx("h-full rounded-full transition-all duration-1000", store.total > 0 ? "bg-sky-500" : "bg-slate-700")}
+                                                style={{ width: `${totalMicroloansGlobal > 0 ? (store.total / totalMicroloansGlobal) * 100 : 0}%` }}
+                                            ></div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Top Employees */}
+                        <div className="space-y-4 px-4 border-x border-slate-800/50">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Users size={14} className="text-slate-500" />
+                                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Top Performers</p>
+                            </div>
+                            <div className="space-y-3 overflow-y-auto custom-scrollbar max-h-[160px] pr-2">
+                                {microloansGlobalRanking.length > 0 ? microloansGlobalRanking.map((emp, i) => (
+                                    <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-slate-800/20 border border-slate-800/50 hover:bg-slate-800/60 transition-colors group/emp">
+                                        <div className="flex items-center gap-3">
+                                            <div className={clsx(
+                                                "w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black shadow-lg",
+                                                i === 0 ? "bg-amber-400 text-amber-950 shadow-amber-500/20" :
+                                                    i === 1 ? "bg-slate-300 text-slate-800 shadow-slate-400/20" :
+                                                        i === 2 ? "bg-amber-700 text-amber-100 shadow-amber-900/20" :
+                                                            "bg-slate-800 text-slate-500"
+                                            )}>{i + 1}</div>
+                                            <div className="flex flex-col">
+                                                <span className="text-xs font-bold text-slate-300 group-hover/emp:text-white transition-colors capitalize">{emp.name.toLowerCase().split(' ')[0]}</span>
+                                                <span className="text-[8px] font-bold text-slate-500 uppercase">{emp.storeName}</span>
+                                            </div>
+                                        </div>
+                                        <span className="text-sm font-black text-sky-400">{emp.count}</span>
+                                    </div>
+                                )) : (
+                                    <div className="text-center py-6">
+                                        <p className="text-[10px] text-slate-600 italic">Sin actividad registrada</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Visual Chart - Monthly Evolution */}
+                        <div className="space-y-4 pl-2 hidden md:block">
+                            <div className="flex items-center gap-2 mb-2">
+                                <TrendingUp size={14} className="text-slate-500" />
+                                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Tendencia (6 Meses)</p>
+                            </div>
+
+                            <div className="h-[160px] flex items-end justify-between gap-2 pt-4 pb-2">
+                                {microloansMonthlyEvolution.map((m, i) => {
+                                    // Calculate relative height, max is roughly based on the highest value or a fixed cap if 0 
+                                    const maxVal = Math.max(...microloansMonthlyEvolution.map(ev => ev.total), 1);
+                                    const heightPercent = Math.max((m.total / maxVal) * 100, 5); // Min 5% height
+
+                                    return (
+                                        <div key={i} className="flex flex-col items-center gap-2 group/bar flex-1 h-full justify-end">
+                                            <span className="text-[10px] font-bold text-sky-400 opacity-0 group-hover/bar:opacity-100 transition-opacity -translate-y-1">{m.total}</span>
+                                            <div
+                                                className={clsx(
+                                                    "w-full rounded-t-lg transition-all duration-500 relative overflow-hidden",
+                                                    m.total > 0 ? "bg-slate-800 hover:bg-sky-500" : "bg-slate-800/30"
+                                                )}
+                                                style={{ height: `${heightPercent}%` }}
+                                            >
+                                                <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/20 to-transparent"></div>
+                                            </div>
+                                            <span className="text-[8px] font-black text-slate-600 uppercase tracking-wider truncate w-full text-center group-hover/bar:text-slate-400 transition-colors">
+                                                {m.month.substring(0, 3)}
+                                            </span>
+                                        </div>
+                                    )
+                                })}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -759,7 +1060,7 @@ const SupervisorDashboard: React.FC = () => {
                                         <td className="p-6">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center text-indigo-400 font-black shadow-inner border border-white/5">{store.name.substring(0, 2).toUpperCase()}</div>
-                                                <div><span className="text-white block font-black text-base">{store.name}</span><span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Centro Operativo | ID: {store.id}</span></div>
+                                                <div><span className="text-white block font-black text-base">{store.name}</span></div>
                                             </div>
                                         </td>
                                         <td className="p-4 text-center text-white font-black text-lg">{store.employeeCount}</td>
@@ -835,7 +1136,175 @@ const SupervisorDashboard: React.FC = () => {
                     </div>
                 </div>
             )}
-        </div>
+            {/* Task Summary Detail Modal */}
+            {isTaskSummaryModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md bg-slate-950/80 animate-in fade-in duration-300">
+                    <div className="bg-slate-900 w-full max-w-5xl rounded-[2.5rem] border border-slate-800 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+                        {/* Header */}
+                        <div className="p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                            <div>
+                                <h3 className="text-2xl font-black text-white flex items-center gap-3">
+                                    <CheckSquare size={28} className="text-indigo-400" /> Detalle de Tareas
+                                </h3>
+                                <p className="text-slate-500 font-medium text-sm mt-1">Supervisión en tiempo real de actividades.</p>
+                            </div>
+                            <button onClick={() => setIsTaskSummaryModalOpen(false)} className="p-3 bg-slate-800 hover:bg-slate-700 rounded-2xl text-slate-400 hover:text-white transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-8 overflow-y-auto custom-scrollbar">
+                            {activeTasks.length > 0 ? (
+                                <div className="grid grid-cols-1 gap-4">
+                                    {activeTasks.map(task => {
+                                        // Calculate completion for this specific task
+                                        const targetIds = task.targetStores === 'all' ? settings.map(s => s.establishmentId) : task.targetStores;
+                                        const completedCount = targetIds.filter(sid => task.status[sid]?.status === 'completed').length;
+                                        const totalTarget = targetIds.length;
+                                        const percent = totalTarget > 0 ? (completedCount / totalTarget) * 100 : 0;
+
+                                        return (
+                                            <div key={task.id} className="bg-slate-950/50 border border-slate-800 rounded-2xl p-6 hover:bg-slate-900/80 transition-colors">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div>
+                                                        <div className="flex items-center gap-3 mb-1">
+                                                            <h4 className="text-lg font-bold text-white">{task.title}</h4>
+                                                            {task.priority === 'high' && (
+                                                                <span className="px-2 py-0.5 rounded-lg bg-rose-500/10 text-rose-400 text-[10px] font-black uppercase border border-rose-500/20">Urgente</span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-sm text-slate-400 max-w-2xl">{task.description}</p>
+                                                    </div>
+                                                    <div className="flex flex-col items-end gap-1">
+                                                        <span className="text-xs font-bold text-slate-500 uppercase">Progreso Global</span>
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-32 h-2 bg-slate-800 rounded-full overflow-hidden">
+                                                                <div className={clsx("h-full rounded-full", percent === 100 ? "bg-emerald-500" : "bg-indigo-500")} style={{ width: `${percent}%` }}></div>
+                                                            </div>
+                                                            <span className={clsx("font-black text-sm", percent === 100 ? "text-emerald-400" : "text-indigo-400")}>{percent.toFixed(0)}%</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Per Store Status Grid */}
+                                                <div className="mt-4 pt-4 border-t border-slate-800/50">
+                                                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-3">Estado por Tienda</p>
+                                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                                                        {targetIds.map(storeId => {
+                                                            const st = task.status[storeId];
+                                                            const isCompleted = st?.status === 'completed';
+                                                            return (
+                                                                <div key={storeId} className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800">
+                                                                    <span className="text-xs font-bold text-slate-300 truncate pr-2">{getStoreName(storeId)}</span>
+                                                                    {isCompleted ? (
+                                                                        <span className="text-emerald-400"><CheckSquare size={14} /></span>
+                                                                    ) : (
+                                                                        <div className="w-3 h-3 rounded-full border-2 border-slate-700"></div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center py-20 text-slate-600">
+                                    <CheckSquare size={48} className="mb-4 opacity-20" />
+                                    <p className="text-lg font-bold">No hay tareas activas</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Microloans Detail Modal */}
+            {
+                isMicroloansModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md bg-slate-950/80 animate-in fade-in duration-300">
+                        <div className="bg-slate-900 w-full max-w-4xl rounded-[2.5rem] border border-slate-800 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+                            {/* Header */}
+                            <div className="p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                                <div>
+                                    <h3 className="text-2xl font-black text-white flex items-center gap-3">
+                                        <Coins size={28} className="text-sky-500" /> Captación de Clientes
+                                    </h3>
+                                    <p className="text-slate-500 font-medium text-sm mt-1">Informe detallado de actividad comercial.</p>
+                                </div>
+                                <button onClick={() => setIsMicroloansModalOpen(false)} className="p-3 bg-slate-800 hover:bg-slate-700 rounded-2xl text-slate-400 hover:text-white transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            {/* Filters */}
+                            <div className="p-6 bg-slate-950/30 flex gap-4 border-b border-slate-800">
+                                <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-2xl border border-slate-800">
+                                    <Building2 size={16} className="ml-3 text-slate-500" />
+                                    <select
+                                        value={microloansFilterStore}
+                                        onChange={(e) => setMicroloansFilterStore(e.target.value)}
+                                        className="bg-transparent border-none text-white font-bold text-sm pr-8 focus:ring-0 cursor-pointer outline-none w-[180px]"
+                                    >
+                                        <option value="all" className="bg-slate-900">Todas las Tiendas</option>
+                                        {storeIds.map(id => <option key={id} value={id} className="bg-slate-900">{getStoreName(id)}</option>)}
+                                    </select>
+                                </div>
+                                <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-2xl border border-slate-800">
+                                    <CalendarDays size={16} className="ml-3 text-slate-500" />
+                                    <select
+                                        value={microloansFilterYear}
+                                        onChange={(e) => setMicroloansFilterYear(Number(e.target.value))}
+                                        className="bg-transparent border-none text-white font-bold text-sm pr-8 focus:ring-0 cursor-pointer outline-none"
+                                    >
+                                        {[2024, 2025, 2026].map(y => <option key={y} value={y} className="bg-slate-900">{y}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Content */}
+                            <div className="p-8 overflow-y-auto custom-scrollbar">
+                                <div className="bg-slate-950/50 rounded-3xl border border-slate-800/50 overflow-hidden">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-900/50 text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                                            <tr>
+                                                <th className="p-5">Mes</th>
+                                                <th className="p-5 text-right w-full">Captaciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-800/50">
+                                            {microloansModalData.map((row, i) => (
+                                                <tr key={i} className="hover:bg-white/5 transition-colors group">
+                                                    <td className="p-5 font-bold text-slate-300 capitalize flex items-center gap-3">
+                                                        <span className="w-8 h-8 rounded-lg bg-sky-500/10 flex items-center justify-center text-sky-500 text-xs font-black group-hover:bg-sky-500 group-hover:text-white transition-colors">
+                                                            {(i + 1).toString().padStart(2, '0')}
+                                                        </span>
+                                                        {row.label}
+                                                    </td>
+                                                    <td className="p-5 text-right">
+                                                        <span className={clsx("text-lg font-black", row.total > 0 ? "text-white" : "text-slate-600")}>
+                                                            {row.total}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            <tr className="bg-sky-500/10">
+                                                <td className="p-5 font-black text-sky-400 uppercase tracking-wider text-xs">Total Anual</td>
+                                                <td className="p-5 text-right font-black text-2xl text-sky-400">
+                                                    {microloansModalData.reduce((a, b) => a + b.total, 0)}
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 };
 

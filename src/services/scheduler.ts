@@ -717,3 +717,213 @@ export const validateRegisterCoverage = (schedule: WeeklySchedule, settings: Sto
 
     return warnings;
 };
+
+export const validateFullSchedule = (
+    schedule: WeeklySchedule,
+    employees: Employee[],
+    settings: StoreSettings,
+    timeOffRequests: TimeOffRequest[],
+    permanentRequests: PermanentRequest[],
+    mode: 'warning' | 'publish' = 'warning'
+): { strictWarnings: string[], debtAdjustments: any[] } => {
+    let strictWarnings: string[] = [];
+    const debtAdjustments: any[] = [];
+    const weekDates = getWeekDates(schedule.weekStartDate);
+
+    // 1. Permanent Restrictions
+    strictWarnings = [...strictWarnings, ...validatePermanentRestrictions(schedule, permanentRequests, employees, false)];
+
+    // 2. Availability Request Validation
+    const weekReqs = timeOffRequests.filter(req => {
+        const emp = employees.find(e => e.id === req.employeeId);
+        if (!emp || emp.establishmentId !== schedule.establishmentId) return false;
+        if (req.dates && req.dates.some(date => weekDates.includes(date))) return true;
+        if (req.startDate && req.endDate) return req.startDate <= weekDates[6] && req.endDate >= weekDates[0];
+        return false;
+    });
+
+    weekReqs.forEach(req => {
+        const empShifts = schedule.shifts.filter((s: any) => s.employeeId === req.employeeId);
+        if (req.dates && req.dates.length > 0) {
+            req.dates.forEach(date => {
+                const shift = empShifts.find((s: any) => s.date === date);
+                if (shift && shift.type !== 'off' && shift.type !== 'holiday' && shift.type !== 'vacation' && shift.type !== 'sick_leave') {
+                    const empName = employees.find(e => e.id === req.employeeId)?.name;
+                    if (req.type === 'day_off') {
+                        strictWarnings.push(`Petición Violada: ${empName} solicitó DÍA LIBRE el ${new Date(date).getDate()} pero tiene turno.`);
+                    } else if (req.type === 'morning_off' && (shift.type === 'morning' || shift.type === 'split')) {
+                        strictWarnings.push(`Petición Violada: ${empName} solicitó MAÑANA LIBRE el ${new Date(date).getDate()} pero tiene turno.`);
+                    } else if (req.type === 'afternoon_off' && (shift.type === 'afternoon' || shift.type === 'split')) {
+                        strictWarnings.push(`Petición Violada: ${empName} solicitó TARDE LIBRE el ${new Date(date).getDate()} pero tiene turno.`);
+                    }
+                }
+            });
+        }
+    });
+
+    // 3. Register Coverage Validation (Strict for Publish)
+    if (mode === 'publish') {
+        const registerWarnings = validateRegisterCoverage(schedule, settings);
+        strictWarnings = [...strictWarnings, ...registerWarnings];
+    }
+
+    // 4. Employee Hours & Debt Calculation
+    const storeEmployees = employees.filter(e => e.establishmentId === schedule.establishmentId && e.active);
+
+    storeEmployees.forEach(emp => {
+        const employeeShifts = schedule.shifts.filter((s: any) => s.employeeId === emp.id);
+        const workedHours = employeeShifts.reduce((acc: number, s: any) => {
+            if (s.type === 'morning' || s.type === 'afternoon') {
+                if (s.startTime && s.endTime) {
+                    const start = parseInt(s.startTime.split(':')[0]) + parseInt(s.startTime.split(':')[1]) / 60;
+                    const end = parseInt(s.endTime.split(':')[0]) + parseInt(s.endTime.split(':')[1]) / 60;
+                    return acc + (end - start);
+                }
+                return acc + 4;
+            }
+            if (s.type === 'split') {
+                if (s.startTime && s.endTime && s.morningEndTime && s.afternoonStartTime) {
+                    const mStart = parseInt(s.startTime.split(':')[0]) + parseInt(s.startTime.split(':')[1]) / 60;
+                    const mEnd = parseInt(s.morningEndTime.split(':')[0]) + parseInt(s.morningEndTime.split(':')[1]) / 60;
+                    const aStart = parseInt(s.afternoonStartTime.split(':')[0]) + parseInt(s.afternoonStartTime.split(':')[1]) / 60;
+                    const aEnd = parseInt(s.endTime.split(':')[0]) + parseInt(s.endTime.split(':')[1]) / 60;
+                    return acc + (mEnd - mStart) + (aEnd - aStart);
+                }
+                return acc + 8;
+            }
+            return acc;
+        }, 0);
+
+        let targetHours = emp.weeklyHours;
+
+        if (emp.tempHours && emp.tempHours.length > 0) {
+            const activeTemp = emp.tempHours.find((t: any) => {
+                return schedule.weekStartDate >= t.start && schedule.weekStartDate <= t.end;
+            });
+            if (activeTemp) {
+                targetHours = activeTemp.hours;
+            }
+        }
+
+        const currentHolidays = settings.holidays;
+        const contractHours = targetHours;
+        let numDaysToReduce = 0;
+
+        weekDates.forEach(d => {
+            const h = currentHolidays.find((holiday: any) => (typeof holiday === 'string' ? holiday : holiday.date) === d);
+            const isFullHoliday = h && (typeof h === 'string' || h.type === 'full');
+            const isPartialHoliday = h && typeof h !== 'string' && (h.type === 'afternoon' || h.type === 'closed_afternoon');
+            const isAbsence = timeOffRequests.some(r =>
+                r.employeeId === emp.id &&
+                (r.type === 'vacation' || r.type === 'sick_leave' || r.type === 'maternity_paternity') &&
+                (r.dates.includes(d) || (r.startDate && r.endDate && d >= r.startDate && d <= r.endDate))
+            );
+
+            if (isFullHoliday || isAbsence) {
+                numDaysToReduce++;
+            } else if (isPartialHoliday && contractHours === 40) {
+                numDaysToReduce += 0.5;
+            }
+        });
+
+        const rReduction = Math.round(numDaysToReduce * 10) / 10;
+        const baseHours = targetHours;
+
+        const reductionTable: Record<number, number[]> = {
+            40: [36, 32, 28, 24, 16],
+            36: [33, 30, 27, 23, 18],
+            32: [30, 27, 24, 21, 16],
+            28: [25, 23, 21, 19, 14],
+            24: [22, 20, 18, 16, 12],
+            20: [18, 17, 15, 13, 10],
+            16: [14, 13, 12, 10, 8]
+        };
+
+        if (rReduction > 0) {
+            const tableRow = reductionTable[baseHours];
+            if (tableRow) {
+                if (rReduction === 0.5) targetHours = tableRow[0];
+                else if (rReduction === 1) targetHours = tableRow[1];
+                else if (rReduction === 1.5) targetHours = tableRow[2];
+                else if (rReduction === 2) targetHours = tableRow[3];
+                else if (rReduction === 3) targetHours = tableRow[4];
+                else if (rReduction >= 5) targetHours = 0;
+                else if (rReduction > 3) targetHours = Math.max(0, baseHours - Math.round((baseHours / 5) * rReduction));
+            } else {
+                targetHours = Math.max(0, baseHours - Math.round((baseHours / 5) * rReduction));
+            }
+        }
+
+        let diff = Math.round((workedHours - targetHours) * 10) / 10;
+
+        const nonOffShifts = employeeShifts.filter((s: any) => s.type !== 'off' && s.type !== 'holiday');
+        const isFullAbsence = nonOffShifts.length > 0 && nonOffShifts.every((s: any) => s.type === 'vacation' || s.type === 'sick_leave');
+        if (isFullAbsence) diff = 0;
+
+        if (diff !== 0) {
+            debtAdjustments.push({
+                empId: emp.id,
+                name: emp.name,
+                amount: diff,
+                worked: Math.round(workedHours * 10) / 10,
+                contract: targetHours
+            });
+            const actionText = diff > 0 ? "se añaden a deuda" : "se restan de deuda";
+            if (diff > 0) {
+                strictWarnings.push(`${emp.name}: Tiene ${diff.toFixed(1)}h extra (${actionText}).`);
+            } else {
+                strictWarnings.push(`${emp.name}: Le faltan ${Math.abs(diff).toFixed(1)}h (${actionText}).`);
+            }
+        }
+    });
+
+    // 5. Daily Coverage & Open/Close Validation
+    weekDates.forEach(date => {
+        const shiftsOnDate = schedule.shifts.filter((s: any) => s.date === date);
+        const morningHours = shiftsOnDate.filter((s: any) => s.type === 'morning' || s.type === 'split').length * 4;
+        const afternoonHours = shiftsOnDate.filter((s: any) => s.type === 'afternoon' || s.type === 'split').length * 4;
+        const totalHours = morningHours + afternoonHours;
+
+        const isSunday = new Date(date).getDay() === 0;
+        const isOpenSunday = settings.openSundays.includes(date);
+        if (isSunday && !isOpenSunday) return;
+
+        const holidayObj = settings.holidays.find((h: any) => (typeof h === 'string' ? h === date : h.date === date));
+        const isFullHoliday = holidayObj && (typeof holidayObj === 'string' || holidayObj.type === 'full');
+        const isAfternoonHoliday = holidayObj && typeof holidayObj !== 'string' && (holidayObj.type === 'afternoon' || holidayObj.type === 'closed_afternoon');
+
+        if (isFullHoliday) return;
+
+        let threshold = 48;
+        if (isAfternoonHoliday) threshold = 24;
+
+        if (totalHours < threshold) {
+            strictWarnings.push(`Baja Cobertura: El ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()} solo tiene ${totalHours}h planificadas (Mínimo recomendado: ${threshold}h).`);
+        }
+
+        if (mode === 'publish' && !isFullHoliday) {
+            const shiftOpening = shiftsOnDate.find((s: any) => s.isOpening);
+            const shiftClosing = shiftsOnDate.find((s: any) => s.isClosing);
+
+            if (!shiftOpening) {
+                strictWarnings.push(`Falta APERTURA (A) el ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()}`);
+            } else {
+                const empOpener = employees.find(e => e.id === shiftOpening.employeeId);
+                if (empOpener && !['Gerente', 'Subgerente', 'Responsable'].includes(empOpener.category)) {
+                    strictWarnings.push(`Apertura sin Responsable: El ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()} la apertura la hace ${empOpener.name} (${empOpener.category}).`);
+                }
+            }
+
+            if (!shiftClosing) {
+                strictWarnings.push(`Falta CIERRE (C) el ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()}`);
+            } else {
+                const empCloser = employees.find(e => e.id === shiftClosing.employeeId);
+                if (empCloser && !['Gerente', 'Subgerente', 'Responsable'].includes(empCloser.category)) {
+                    strictWarnings.push(`Cierre sin Responsable: El ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()} el cierre lo hace ${empCloser.name} (${empCloser.category}).`);
+                }
+            }
+        }
+    });
+
+    return { strictWarnings, debtAdjustments };
+};

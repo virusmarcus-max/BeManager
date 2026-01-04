@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import type { Employee, WeeklySchedule, BreakLog, StoreSettings, TimeOffRequest, EmployeeLog, Shift, PermanentRequest, HoursDebtLog, TemporaryHoursAdjustment, Notification, Task, TaskStatus, IncentiveReport } from '../types';
+import type { Employee, WeeklySchedule, BreakLog, StoreSettings, TimeOffRequest, EmployeeLog, Shift, PermanentRequest, HoursDebtLog, TemporaryHoursAdjustment, Notification, Task, TaskStatus, IncentiveReport, ILTReport } from '../types';
 import { generateWeeklySchedule } from '../services/scheduler';
 import { DEFAULT_STORE_NAMES } from '../services/storeConfig';
 
@@ -95,12 +95,15 @@ interface StoreContextType {
     markNotificationAsRead: (id: string) => void;
     removeNotification: (id: string) => void;
     addEmployee: (employee: Omit<Employee, 'id' | 'active' | 'hoursDebt'>) => string;
-    deactivateEmployee: (id: string, reason: string) => void;
+    deactivateEmployee: (id: string, reason: string, contractEndDate?: string) => void;
     reactivateEmployee: (id: string, options?: { contractType?: 'indefinido' | 'temporal', contractEndDate?: string, substitutingId?: string }) => void;
     updateEmployee: (id: string, updates: Partial<Employee>) => void;
     // Incentives
     incentiveReports: IncentiveReport[];
     updateIncentiveReport: (report: IncentiveReport) => void;
+    // ILT Reports
+    iltReports: ILTReport[];
+    addILTReport: (report: ILTReport) => void;
     tracker: (type: 'hire' | 'termination' | 'modification', details: string, employeeId: string, establishmentId: string) => void;
     startBreak: (employeeId: string) => void;
     endBreak: (logId: string) => void;
@@ -108,6 +111,7 @@ interface StoreContextType {
     updateShift: (scheduleId: string, shiftId: string, updates: Partial<Shift>) => void;
     publishSchedule: (scheduleId: string) => void;
     getSettings: (establishmentId: string) => StoreSettings;
+    getManagerNames: (establishmentId: string) => string;
     updateSettings: (newSettings: StoreSettings) => void;
     addTimeOff: (request: Omit<TimeOffRequest, 'id' | 'status'>) => void;
     removeTimeOff: (id: string) => void;
@@ -139,6 +143,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const [hoursDebtLogs, setHoursDebtLogs] = useState<HoursDebtLog[]>([]);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [incentiveReports, setIncentiveReports] = useState<IncentiveReport[]>([]);
+    const [iltReports, setILTReports] = useState<ILTReport[]>([]);
     const [tasks, setTasks] = useState<Task[]>([]);
     const [isLoaded, setIsLoaded] = useState(false);
 
@@ -165,6 +170,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     setHoursDebtLogs(parsed.hoursDebtLogs || []);
                     setNotifications(parsed.notifications || []);
                     setIncentiveReports(parsed.incentiveReports || []);
+                    setILTReports(parsed.iltReports || []);
                     // Filter tasks: Keep cyclical tasks, remove specific tasks older than 60 days
                     const limitDate = new Date();
                     limitDate.setDate(limitDate.getDate() - 60);
@@ -221,6 +227,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setTimeOffRequests([]);
             setNotifications([]);
             setIncentiveReports([]);
+            setILTReports([]);
             setTasks([]);
             setPermanentRequests([
                 {
@@ -248,7 +255,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     useEffect(() => {
         if (!isLoaded) return;
         try {
-            const data = { employees, schedules, breakLogs, employeeLogs, settings, timeOffRequests, permanentRequests, hoursDebtLogs, notifications, tasks, incentiveReports };
+            const data = { employees, schedules, breakLogs, employeeLogs, settings, timeOffRequests, permanentRequests, hoursDebtLogs, notifications, tasks, incentiveReports, iltReports };
             localStorage.setItem('saas_schedule_clean_v2', JSON.stringify(data));
         } catch (error) {
             console.error("CRITICAL: Failed to save to localStorage. Quota might be exceeded.", error);
@@ -351,10 +358,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             id: crypto.randomUUID(),
             active: true,
             hoursDebt: 0,
+            contractStartDate: employeeData.seniorityDate, // Explicitly save this as the contract start date
             history: [{
                 date: new Date().toISOString(),
                 type: 'hired',
-                reason: 'Alta inicial'
+                reason: 'Alta inicial',
+                contractStartDate: employeeData.seniorityDate
             }]
         };
         setEmployees(prev => [...prev, newEmployee]);
@@ -371,7 +380,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
     };
 
-    const deactivateEmployee = (id: string, reason: string) => {
+    const deactivateEmployee = (id: string, reason: string, contractEndDate?: string) => {
         const emp = employees.find(e => e.id === id);
         if (emp) {
             tracker('termination', `Baja de empleado: ${emp.name}. Motivo: ${reason}`, id, emp.establishmentId);
@@ -380,10 +389,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setEmployees(prev => prev.map(e => e.id === id ? {
                 ...e,
                 active: false,
+                contractEndDate: contractEndDate, // Save the actual end date if provided
                 history: [...(e.history || []), {
                     date: new Date().toISOString(),
                     type: 'terminated',
-                    reason
+                    reason,
+                    contractEndDate
                 }]
             } : e));
 
@@ -504,6 +515,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             contactEmail: ''
         };
         return newSettings;
+    };
+
+    const getManagerNames = (establishmentId: string): string => {
+        const managers = employees.filter(e => e.establishmentId === establishmentId && e.active && e.category === 'Gerente');
+        if (managers.length === 0) return '';
+
+        // Format: "Name1", "Name1 y Name2", "Name1, Name2 y Name3"
+        const names = managers.map(m => m.name.split(' ')[0]); // Use first names
+        if (names.length === 1) return names[0];
+        if (names.length === 2) return `${names[0]} y ${names[1]}`;
+        return `${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}`;
     };
 
     const updateSettings = (newSettings: StoreSettings) => {
@@ -665,7 +687,42 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     const addTimeOff = (req: Omit<TimeOffRequest, 'id' | 'status'>) => {
-        setTimeOffRequests(prev => [...prev, { ...req, id: crypto.randomUUID(), status: 'approved' }]);
+        const requestId = crypto.randomUUID();
+        setTimeOffRequests(prev => [...prev, { ...req, id: requestId, status: 'approved' }]);
+
+        // Notify supervisor if it's a sick leave in a published week
+        if (req.type === 'sick_leave') {
+            const emp = employees.find(e => e.id === req.employeeId);
+            if (!emp) return;
+
+            const dates = req.dates || [];
+            // Check if any date belongs to a published schedule
+            const affectedPublishedSchedules = schedules.filter(s =>
+                s.establishmentId === emp.establishmentId &&
+                s.approvalStatus === 'approved' &&
+                dates.some(d => {
+                    const date = new Date(d);
+                    const weekStart = new Date(s.weekStartDate);
+                    const weekEnd = new Date(weekStart);
+                    weekEnd.setDate(weekEnd.getDate() + 6);
+                    return date >= weekStart && date <= weekEnd;
+                })
+            );
+
+            if (affectedPublishedSchedules.length > 0) {
+                const storeName = getSettings(emp.establishmentId).storeName || `Tienda ${emp.establishmentId}`;
+                const newNotif: Notification = {
+                    id: crypto.randomUUID(),
+                    establishmentId: 'admin',
+                    message: `Baja Médica: ${emp.name} en ${storeName} (Horario Publicado)`,
+                    type: 'warning',
+                    read: false,
+                    createdAt: new Date().toISOString(),
+                    linkTo: '/supervision'
+                };
+                setNotifications(prev => [newNotif, ...prev]);
+            }
+        }
     };
 
     const removeTimeOff = (id: string) => {
@@ -792,6 +849,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
     };
 
+    const addILTReport = (report: ILTReport) => {
+        setILTReports(prev => {
+            // Replace if exists for same month/shop? Or just append? User said history.
+            // Usually, we overwrite if same ID, or append if new.
+            const exists = prev.findIndex(r => r.id === report.id);
+            if (exists >= 0) {
+                const copy = [...prev];
+                copy[exists] = report;
+                return copy;
+            }
+            return [...prev, report];
+        });
+    };
+
     const resetData = () => {
         setSchedules([]);
         setHoursDebtLogs([]);
@@ -827,10 +898,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             addTimeOff, removeTimeOff, updateTimeOff,
             addPermanentRequest, removePermanentRequest, updatePermanentRequest,
 
-            hoursDebtLogs, updateHoursDebt, addTempHours, removeTempHours, resetData, requestScheduleModification, respondToModificationRequest,
+            hoursDebtLogs, updateHoursDebt, addTempHours, removeTempHours, resetData, requestScheduleModification, respondToModificationRequest, getManagerNames,
             notifications, markNotificationAsRead, removeNotification,
             tasks, addTask, updateTask, deleteTask, triggerCyclicalTask, updateTaskStatus,
-            incentiveReports, updateIncentiveReport
+            incentiveReports, updateIncentiveReport,
+            iltReports, addILTReport
         }}>
 
             {children}

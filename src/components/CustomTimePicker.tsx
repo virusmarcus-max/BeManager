@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react';
-import { Clock, ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface TimePickerProps {
@@ -42,7 +41,7 @@ export const CustomTimePicker = ({ value, onChange, disabled, className }: TimeP
     const handleTimeSelect = (h: string, m: string) => {
         setSelectedHour(h);
         setSelectedMinute(m);
-        onChange(`${h}:${m}`);
+        onChange(`${h}:${m} `);
     };
 
     return (
