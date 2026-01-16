@@ -198,8 +198,8 @@ const DashboardPage: React.FC = () => {
         if (totalDays === 0) return 0;
 
         // Proportional penalty: missing all days = 0%
-        // We weight IT more than Mat/Pat (Mat/Pat only penalizes 33% compared to IT)
-        const totalPenaltyDays = itDays + (matDays * 0.33);
+        // IT and Mat/Pat count equally (1.0 weight each)
+        const totalPenaltyDays = itDays + matDays;
         const penaltyPercentage = (totalPenaltyDays / totalDays) * 100;
 
         const score = 100 - penaltyPercentage;
