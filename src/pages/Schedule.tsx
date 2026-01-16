@@ -834,7 +834,7 @@ const Schedule = () => {
                     /* Allow table to break inside IF absolutely necessary, but prefer avoid */
                     table { width: 100%; border-collapse: collapse; font-size: ${fontSize}; table-layout: fixed; page-break-inside: avoid; }
                     th, td { border: 1px solid #000000; padding: ${cellPadding}; text-align: center; vertical-align: middle; }
-                    th { background-color: #f3f4f6; font-weight: 800; color: #111827; padding: 6px 5px; uppercase; font-size: 10px; letter-spacing: 0.05em; border-bottom: 2px solid #000000; }
+                    th { background-color: #f3f4f6; font-weight: 800; color: #111827; padding: 6px 5px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; border-bottom: 2px solid #000000; }
                     
                     .employee-cell { text-align: left; font-weight: 700; width: 130px; padding-left: 8px; color: #111827; border-right: 2px solid #000000; }
                     .employee-meta { font-size: 9px; color: #4b5563; font-weight: 500; display: block; margin-top: 1px; }
