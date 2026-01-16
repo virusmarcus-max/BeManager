@@ -13,22 +13,6 @@ import { DatePicker } from '../components/DatePicker';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { DEFAULT_STORE_NAMES } from '../services/storeConfig';
 
-const getDaysRemainingLabel = (dateStr: string) => {
-    if (!dateStr) return '';
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dueDate = new Date(dateStr);
-    dueDate.setHours(0, 0, 0, 0);
-    const diffTime = dueDate.getTime() - today.getTime();
-    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-
-    const dateFormatted = new Date(dateStr).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-
-    if (diffDays < 0) return `Vencida (${Math.abs(diffDays)}d) - ${dateFormatted}`;
-    if (diffDays === 0) return `Hoy (${dateFormatted})`;
-    if (diffDays === 1) return `Mañana (${dateFormatted})`;
-    return `${diffDays} días restantes (${dateFormatted})`;
-};
 
 const getStatusColor = (status: TaskStatus) => {
     switch (status) {

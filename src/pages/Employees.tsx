@@ -11,7 +11,7 @@ import { parseLocalDate, formatLocalDate } from '../services/dateUtils';
 import {
     Plus, Trash2, Pencil, CalendarClock, Plane,
     TrendingUp, Activity, AlertCircle, Clock, RotateCcw,
-    Users, ShieldAlert, X, FileText, History as LucideHistory
+    Users, ShieldAlert, X, History as LucideHistory
 } from 'lucide-react';
 import { DatePicker } from '../components/DatePicker';
 import type { Employee, TimeOffType } from '../types';
