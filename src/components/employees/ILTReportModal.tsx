@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { useAuth } from '../../context/AuthContext';
-import { X, Printer, FileText, History, Calendar, Download, RefreshCw, FileSpreadsheet } from 'lucide-react';
+import { X, Printer, FileText, History as LucideHistory, Calendar, Download, FileSpreadsheet } from 'lucide-react';
 import type { ILTReport, ILTReportItem } from '../../types';
 import clsx from 'clsx';
 import { useToast } from '../../context/ToastContext';
@@ -10,21 +10,30 @@ import { useToast } from '../../context/ToastContext';
 interface ILTReportModalProps {
     isOpen: boolean;
     onClose: () => void;
+    initialTab?: 'current' | 'history';
 }
 
-const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
+const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose, initialTab = 'current' }) => {
     const { employees, timeOffRequests, iltReports, addILTReport, getSettings } = useStore();
     const { user } = useAuth();
     const { showToast } = useToast();
-    const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
+    const [activeTab, setActiveTab] = useState<'current' | 'history'>(initialTab);
     const [selectedHistoryReport, setSelectedHistoryReport] = useState<ILTReport | null>(null);
-    const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const [isConfirmSaveOpen, setIsConfirmSaveOpen] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+
+    // Sync activeTab with initialTab when opening
+    React.useEffect(() => {
+        if (isOpen) {
+            setActiveTab(initialTab);
+        }
+    }, [isOpen, initialTab]);
 
     // Current Month Helpers
     const now = new Date();
     const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const dayOfMonth = now.getDate();
-    const isReportPeriod = dayOfMonth >= 20 && dayOfMonth <= 30;
+    const isReportPeriod = dayOfMonth >= 22;
 
     const generateReportData = (): ILTReport => {
         if (!user) throw new Error("No user");
@@ -73,111 +82,128 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
             }
             // Calculate ILT (Sick Leave) days in this month
             const sickRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'sick_leave');
-            let itDays = 0;
+            const itDateSet = new Set<string>();
             const itRanges: { start: string, end: string }[] = [];
 
             sickRequests.forEach(req => {
-                // If specific dates
-                if (req.dates && req.dates.length > 0) {
-                    req.dates.forEach(d => {
-                        const dateObj = new Date(d);
-                        if (dateObj >= startOfMonth && dateObj <= endOfMonth) itDays++;
-                    });
-                    // Approximate ranges for specific dates is hard, but usually sick leave is range-based in this system or "dates" array.
-                    // If complex list of dates, we just list the count for report usually, but prompt asked for ranges.
-                    // We'll treat contiguous dates as ranges or just use the whole block if strictly provided.
-                    // Actually, the new sick leave modal uses startDate/endDate.
-                }
+                const datesToProcess = new Set<string>();
 
+                // Prefer startDate/endDate if available
                 if (req.startDate && req.endDate) {
                     const rStart = new Date(req.startDate);
                     const rEnd = new Date(req.endDate);
+                    for (let d = new Date(rStart); d <= rEnd; d.setDate(d.getDate() + 1)) {
+                        datesToProcess.add(d.toISOString().split('T')[0]);
+                    }
 
-                    // Overlap
-                    const start = rStart < startOfMonth ? startOfMonth : rStart;
-                    const end = rEnd > endOfMonth ? endOfMonth : rEnd;
-
-                    if (start <= end) {
-                        const diffTime = Math.abs(end.getTime() - start.getTime());
-                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-                        itDays += diffDays;
+                    // Keep track of ranges for the report
+                    const overlapStart = rStart < startOfMonth ? startOfMonth : rStart;
+                    const overlapEnd = rEnd > endOfMonth ? endOfMonth : rEnd;
+                    if (overlapStart <= overlapEnd) {
                         itRanges.push({
-                            start: start.toISOString().split('T')[0],
-                            end: end.toISOString().split('T')[0]
-                        });
-                    }
-                }
-            });
-
-            // Calculate Mat/Pat
-            const matPatRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'maternity_paternity');
-            let matPatDays = 0;
-            const matPatRanges: { start: string, end: string }[] = [];
-
-            matPatRequests.forEach(req => {
-                if (req.startDate && req.endDate) {
-                    const rStart = new Date(req.startDate);
-                    const rEnd = new Date(req.endDate);
-                    const start = rStart < startOfMonth ? startOfMonth : rStart;
-                    const end = rEnd > endOfMonth ? endOfMonth : rEnd;
-
-                    if (start <= end) {
-                        const diffDays = Math.ceil(Math.abs(end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                        matPatDays += diffDays;
-                        matPatRanges.push({
-                            start: start.toISOString().split('T')[0],
-                            end: end.toISOString().split('T')[0]
-                        });
-                    }
-                }
-            });
-
-            // Calculate Vacations
-            const vacRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'vacation');
-            let vacationDays = 0;
-            const vacationRanges: { start: string, end: string }[] = [];
-
-            vacRequests.forEach(req => {
-                // Check dates array
-                if (req.dates) {
-                    req.dates.forEach(d => {
-                        const dateObj = new Date(d);
-                        if (dateObj >= startOfMonth && dateObj <= endOfMonth) vacationDays++;
-                    });
-                }
-                // Check ranges if they exist (vacation might be mixed)
-                if (req.startDate && req.endDate) {
-                    const rStart = new Date(req.startDate);
-                    const rEnd = new Date(req.endDate);
-                    const start = rStart < startOfMonth ? startOfMonth : rStart;
-                    const end = rEnd > endOfMonth ? endOfMonth : rEnd;
-
-                    if (start <= end) {
-                        // Recalculate days based on overlap if dates array wasn't used/authoritative
-                        // But usually 'dates' is source of truth for vacation count.
-                        // If dates is empty but start/end exists (legacy?), use range.
-                        if (!req.dates || req.dates.length === 0) {
-                            const diffDays = Math.ceil(Math.abs(end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                            vacationDays += diffDays;
-                        }
-                        vacationRanges.push({
-                            start: start.toISOString().split('T')[0],
-                            end: end.toISOString().split('T')[0]
+                            start: overlapStart.toISOString().split('T')[0],
+                            end: overlapEnd.toISOString().split('T')[0]
                         });
                     }
                 } else if (req.dates && req.dates.length > 0) {
-                    // Try to form ranges from discrete dates
+                    req.dates.forEach(d => datesToProcess.add(d));
+
+                    // For specific dates, we might want to represent them as ranges too if they are contiguous
+                    // but for simplicity and following previous logic:
                     const sorted = [...req.dates].sort();
-                    // Simplified: just list min and max of the cluster intersecting this month?
-                    const inMonth = sorted.filter(d => d >= startOfMonth.toISOString().split('T')[0] && d <= endOfMonth.toISOString().split('T')[0]);
+                    const inMonth = sorted.filter(d => {
+                        const dateObj = new Date(d);
+                        return dateObj >= startOfMonth && dateObj <= endOfMonth;
+                    });
                     if (inMonth.length > 0) {
-                        vacationRanges.push({
+                        itRanges.push({
                             start: inMonth[0],
                             end: inMonth[inMonth.length - 1]
                         });
                     }
                 }
+
+                // Add to total month set
+                datesToProcess.forEach(dStr => {
+                    const dateObj = new Date(dStr);
+                    if (dateObj >= startOfMonth && dateObj <= endOfMonth) {
+                        itDateSet.add(dStr);
+                    }
+                });
             });
+            const itDays = itDateSet.size;
+
+            // Calculate Mat/Pat
+            const matPatRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'maternity_paternity');
+            const matPatDateSet = new Set<string>();
+            const matPatRanges: { start: string, end: string }[] = [];
+
+            matPatRequests.forEach(req => {
+                const datesToProcess = new Set<string>();
+                if (req.startDate && req.endDate) {
+                    const rStart = new Date(req.startDate);
+                    const rEnd = new Date(req.endDate);
+                    for (let d = new Date(rStart); d <= rEnd; d.setDate(d.getDate() + 1)) {
+                        datesToProcess.add(d.toISOString().split('T')[0]);
+                    }
+
+                    const overlapStart = rStart < startOfMonth ? startOfMonth : rStart;
+                    const overlapEnd = rEnd > endOfMonth ? endOfMonth : rEnd;
+                    if (overlapStart <= overlapEnd) {
+                        matPatRanges.push({
+                            start: overlapStart.toISOString().split('T')[0],
+                            end: overlapEnd.toISOString().split('T')[0]
+                        });
+                    }
+                } else if (req.dates && req.dates.length > 0) {
+                    req.dates.forEach(d => datesToProcess.add(d));
+                }
+
+                datesToProcess.forEach(dStr => {
+                    const dateObj = new Date(dStr);
+                    if (dateObj >= startOfMonth && dateObj <= endOfMonth) {
+                        matPatDateSet.add(dStr);
+                    }
+                });
+            });
+            const matPatDays = matPatDateSet.size;
+
+            // Calculate Vacations
+            const vacRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'vacation');
+            const vacationDateSet = new Set<string>();
+            const vacationRanges: { start: string, end: string }[] = [];
+
+            vacRequests.forEach(req => {
+                const datesToProcess = new Set<string>();
+                if (req.dates && req.dates.length > 0) {
+                    req.dates.forEach(d => datesToProcess.add(d));
+                } else if (req.startDate && req.endDate) {
+                    const rStart = new Date(req.startDate);
+                    const rEnd = new Date(req.endDate);
+                    for (let d = new Date(rStart); d <= rEnd; d.setDate(d.getDate() + 1)) {
+                        datesToProcess.add(d.toISOString().split('T')[0]);
+                    }
+                }
+
+                if (req.startDate && req.endDate) {
+                    const overlapStart = new Date(req.startDate) < startOfMonth ? startOfMonth : new Date(req.startDate);
+                    const overlapEnd = new Date(req.endDate) > endOfMonth ? endOfMonth : new Date(req.endDate);
+                    if (overlapStart <= overlapEnd) {
+                        vacationRanges.push({
+                            start: overlapStart.toISOString().split('T')[0],
+                            end: overlapEnd.toISOString().split('T')[0]
+                        });
+                    }
+                }
+
+                datesToProcess.forEach(dStr => {
+                    const dateObj = new Date(dStr);
+                    if (dateObj >= startOfMonth && dateObj <= endOfMonth) {
+                        vacationDateSet.add(dStr);
+                    }
+                });
+            });
+            const vacationDays = vacationDateSet.size;
 
             // Fix double counting if logic mixed
             // Assuming vacationDays is correct via dates count usually.
@@ -210,12 +236,23 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
     const currentReport = useMemo(() => {
         if (!isOpen || activeTab !== 'current') return null;
         return generateReportData();
-    }, [isOpen, activeTab, employees, timeOffRequests, refreshTrigger]);
+    }, [isOpen, activeTab, employees, timeOffRequests]);
 
-    const handleSaveReport = () => {
-        if (!currentReport) return;
-        addILTReport(currentReport);
-        showToast('Informe guardado en el historial', 'success');
+    const handleSaveReport = async () => {
+        if (!currentReport || isSaving) return;
+
+        setIsSaving(true);
+        try {
+            await addILTReport(currentReport);
+            showToast('Informe guardado correctamente', 'success');
+            setIsConfirmSaveOpen(false);
+            onClose();
+        } catch (error) {
+            console.error("Error saving report:", error);
+            showToast('Error al guardar el informe', 'error');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handlePrint = () => {
@@ -232,21 +269,60 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
                 <head>
                     <title>Informe ILT - ${reportToPrint.month}</title>
                     <style>
-                        body { font-family: system-ui, sans-serif; padding: 40px; }
-                        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
-                        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                        th { background-color: #f3f4f6; }
-                        h1 { font-size: 24px; margin-bottom: 10px; }
-                        .header { margin-bottom: 30px; }
+                        @page { 
+                            size: A4 portrait; 
+                            margin: 15mm; 
+                        }
+                        body { 
+                            font-family: system-ui, -apple-system, sans-serif; 
+                            padding: 0; 
+                            margin: 0;
+                            color: #1e293b;
+                        }
+                        .print-container {
+                            width: 100%;
+                            max-width: 210mm;
+                            margin: 0 auto;
+                        }
+                        table { 
+                            width: 100%; 
+                            border-collapse: collapse; 
+                            margin-top: 20px; 
+                            font-size: 10pt; 
+                        }
+                        th, td { 
+                            border: 1px solid #e2e8f0; 
+                            padding: 8px 6px; 
+                            text-align: left; 
+                        }
+                        th { 
+                            background-color: #f8fafc !important; 
+                            -webkit-print-color-adjust: exact;
+                            font-weight: bold;
+                            text-transform: uppercase;
+                            font-size: 8pt;
+                            color: #64748b;
+                        }
+                        h1 { font-size: 18pt; margin-bottom: 4pt; color: #0f172a; }
+                        .text-indigo-600 { color: #4f46e5 !important; -webkit-print-color-adjust: exact; }
+                        .header { border-bottom: 2px solid #f1f5f9; margin-bottom: 20px; padding-bottom: 20px; }
+                        .footer { margin-top: 40px; border-top: 1px solid #f1f5f9; padding-top: 20px; display: flex; justify-content: justify-content: space-between; align-items: flex-end; }
+                        .signature-box { border-bottom: 1px solid #94a3b8; width: 200px; margin-bottom: 8px; height: 60px; }
                     </style>
                 </head>
                 <body>
-                    ${printContent.innerHTML}
+                    <div class="print-container">
+                        ${printContent.innerHTML}
+                    </div>
                 </body>
                 </html>
             `);
             printWindow.document.close();
-            printWindow.print();
+            printWindow.focus();
+            setTimeout(() => {
+                printWindow.print();
+                printWindow.close();
+            }, 250);
         }
     };
 
@@ -255,7 +331,7 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
         if (!report) return;
 
         // CSV Header
-        const headers = ['Empleado', 'Horas Contrato', 'Incorporación', 'Fin Contrato', 'Días Baja IT', 'Días Mat/Pat', 'Días Vacaciones'];
+        const headers = ['Empleado', 'Horas Contrato', 'Fecha de Contratación', 'Fin Contrato', 'Días Baja IT', 'Periodos IT', 'Días Mat/Pat', 'Periodos Mat/Pat', 'Días Vacaciones', 'Periodos Vacaciones'];
 
         // CSV Rows
         const rows = report.items.map(item => [
@@ -264,8 +340,11 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
             item.hireDate ? new Date(item.hireDate).toLocaleDateString('es-ES') : '',
             item.contractEndDate ? new Date(item.contractEndDate).toLocaleDateString('es-ES') : '',
             item.itDays,
+            item.itRanges.map(r => `${new Date(r.start).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}-${new Date(r.end).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}`).join(' / '),
             item.matPatDays,
-            item.vacationDays
+            item.matPatRanges.map(r => `${new Date(r.start).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}-${new Date(r.end).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}`).join(' / '),
+            item.vacationDays,
+            item.vacationRanges.map(r => `${new Date(r.start).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}-${new Date(r.end).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}`).join(' / ')
         ]);
 
         // Combine into CSV Content
@@ -312,7 +391,6 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
                         <X size={24} />
                     </button>
                 </div>
-
                 {/* Tabs */}
                 <div className="flex border-b border-slate-100 px-6 gap-6 justify-between items-center">
                     <div className="flex gap-6">
@@ -326,24 +404,10 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
                             onClick={() => setActiveTab('history')}
                             className={clsx("py-4 text-sm font-bold border-b-2 transition-colors flex items-center gap-2", activeTab === 'history' ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-400 hover:text-slate-600")}
                         >
-                            <History size={16} /> Historial
+                            <LucideHistory size={16} /> Historial
                         </button>
                     </div>
-
-                    {activeTab === 'current' && (
-                        <button
-                            onClick={() => {
-                                setRefreshTrigger(prev => prev + 1);
-                                showToast('Informe regenerado con datos actuales', 'success');
-                            }}
-                            className="text-xs font-bold text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2"
-                        >
-                            <RefreshCw size={14} /> Regenerar Datos
-                        </button>
-                    )}
                 </div>
-
-                {/* Content */}
                 <div className="flex-1 overflow-hidden flex">
 
                     {/* Left Sidebar for History (only if History tab) */}
@@ -377,7 +441,7 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
                     <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-slate-100/50">
                         {activeTab === 'history' && !selectedHistoryReport ? (
                             <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                                <History size={48} className="mb-4 opacity-20" />
+                                <LucideHistory size={48} className="mb-4 opacity-20" />
                                 <p>Selecciona un informe del historial</p>
                             </div>
                         ) : (
@@ -391,8 +455,8 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
                                                 <p className="text-slate-500 font-medium">ILT / Vacaciones / Altas y Bajas</p>
                                             </div>
                                             <div className="text-right">
-                                                <div className="text-3xl font-black text-indigo-600">{activeReport.month}</div>
-                                                <div className="text-xs text-slate-400 font-medium mt-1">Generado: {new Date(activeReport.generatedAt).toLocaleDateString()}</div>
+                                                <div className="text-3xl font-black text-indigo-600">{activeReport?.month}</div>
+                                                <div className="text-xs text-slate-400 font-medium mt-1">Generado: {activeReport ? new Date(activeReport.generatedAt).toLocaleDateString() : ''}</div>
                                                 <div className="text-sm font-bold text-slate-700 mt-2">{getSettings(user?.establishmentId || '').storeName}</div>
                                             </div>
                                         </div>
@@ -403,7 +467,7 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
                                                     <tr className="border-b-2 border-slate-100">
                                                         <th className="py-3 px-2 text-xs font-black uppercase text-slate-400 tracking-wider">Empleado</th>
                                                         <th className="py-3 px-2 text-xs font-black uppercase text-slate-400 tracking-wider text-center">Horas C.</th>
-                                                        <th className="py-3 px-2 text-xs font-black uppercase text-slate-400 tracking-wider text-center">Incorporación</th>
+                                                        <th className="py-3 px-2 text-xs font-black uppercase text-slate-400 tracking-wider text-center">Fecha de Contratación</th>
                                                         <th className="py-3 px-2 text-xs font-black uppercase text-slate-400 tracking-wider text-center">Fin Cont.</th>
                                                         <th className="py-3 px-2 text-xs font-black uppercase text-slate-400 tracking-wider text-center">Baja IT</th>
                                                         <th className="py-3 px-2 text-xs font-black uppercase text-slate-400 tracking-wider text-center">Mat/Pat</th>
@@ -481,10 +545,10 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
                 <div className="p-6 bg-white border-t border-slate-100 flex justify-end gap-4">
                     {activeTab === 'current' && isReportPeriod && (
                         <button
-                            onClick={handleSaveReport}
-                            className="px-6 py-3 bg-slate-100 text-slate-600 hover:bg-slate-200 font-bold rounded-xl transition-colors flex items-center gap-2"
+                            onClick={() => setIsConfirmSaveOpen(true)}
+                            className="px-6 py-3 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-black rounded-xl transition-all flex items-center gap-2 border border-indigo-200 shadow-sm"
                         >
-                            <Download size={18} /> Guardar Copia
+                            <Download size={18} /> Guardar Informe
                         </button>
                     )}
 
@@ -505,9 +569,43 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
                         </>
                     )}
                 </div>
-            </div>
+            </div >
 
-        </div>
+            {/* Custom Confirmation Modal */}
+            {isConfirmSaveOpen && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md p-8 transform animate-in zoom-in-95 duration-300">
+                        <div className="flex flex-col items-center text-center">
+                            <div className="h-16 w-16 rounded-full bg-amber-50 flex items-center justify-center text-amber-500 mb-6">
+                                <LucideHistory size={32} />
+                            </div>
+                            <h4 className="text-xl font-black text-slate-800 mb-2">¿Guardar Informe Mensual?</h4>
+                            <p className="text-slate-500 font-medium text-sm mb-8">
+                                Una vez guardado en el historial, el acceso directo desaparecerá del Dashboard para evitar duplicados.
+                            </p>
+                            <div className="flex gap-3 w-full">
+                                <button
+                                    onClick={() => setIsConfirmSaveOpen(false)}
+                                    disabled={isSaving}
+                                    className="flex-1 px-6 py-3 bg-slate-50 text-slate-500 font-bold rounded-xl hover:bg-slate-100 transition-colors disabled:opacity-50"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleSaveReport}
+                                    disabled={isSaving}
+                                    className="flex-1 px-6 py-3 bg-indigo-600 text-white font-black rounded-xl shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                                >
+                                    {isSaving ? (
+                                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    ) : 'Confirmar'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div >
     );
 };
 

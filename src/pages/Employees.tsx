@@ -11,7 +11,7 @@ import { parseLocalDate, formatLocalDate } from '../services/dateUtils';
 import {
     Plus, Trash2, Pencil, CalendarClock, Plane,
     TrendingUp, Activity, AlertCircle, Clock, RotateCcw,
-    Users, ShieldAlert, X, FileText
+    Users, ShieldAlert, X, FileText, History as LucideHistory
 } from 'lucide-react';
 import { DatePicker } from '../components/DatePicker';
 import type { Employee, TimeOffType } from '../types';
@@ -75,6 +75,7 @@ const EmployeesPage: React.FC = () => {
     const [historyEmpId, setHistoryEmpId] = useState<string | null>(null);
     const [isFullHistoryModalOpen, setIsFullHistoryModalOpen] = useState(false); // New state for full history
     const [isILTModalOpen, setIsILTModalOpen] = useState(false);
+    const [iltModalTab, setIltModalTab] = useState<'current' | 'history'>('current');
 
     const getFullStoreHistory = () => {
         if (!user) return [];
@@ -401,6 +402,7 @@ const EmployeesPage: React.FC = () => {
                         <p className="text-slate-500 font-medium">Gestión estratégica de personal en {user.establishmentName}</p>
                     </div>
 
+
                     <div className="flex flex-wrap items-center gap-3">
                         {/* Secondary Tools Menu */}
                         <div className="flex bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm">
@@ -425,16 +427,14 @@ const EmployeesPage: React.FC = () => {
                             <div className="w-px h-6 bg-slate-200 mx-2"></div>
 
                             <button
-                                onClick={() => setIsILTModalOpen(true)}
-                                className={clsx(
-                                    "px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2",
-                                    (new Date().getDate() >= 20 && new Date().getDate() <= 30)
-                                        ? "bg-indigo-50 text-indigo-600 animate-pulse hover:animate-none hover:bg-indigo-100"
-                                        : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
-                                )}
-                                title="Informe ILT"
+                                onClick={() => {
+                                    setIltModalTab('history');
+                                    setIsILTModalOpen(true);
+                                }}
+                                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition-all flex items-center gap-2 border-l border-slate-100"
+                                title="Historial ILT"
                             >
-                                <FileText size={18} /> <span className="hidden sm:inline">Informe ILT</span>
+                                <LucideHistory size={16} /> <span className="hidden lg:inline">Historial ILT</span>
                             </button>
                         </div>
 
@@ -1725,6 +1725,7 @@ const EmployeesPage: React.FC = () => {
             <ILTReportModal
                 isOpen={isILTModalOpen}
                 onClose={() => setIsILTModalOpen(false)}
+                initialTab={iltModalTab}
             />
         </div>
     );

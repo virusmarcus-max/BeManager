@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
-import { Users, Calendar, BarChart3, LogOut, Menu, Settings, CheckCircle, Radio, CheckSquare, Coins } from 'lucide-react';
+import { Users, Calendar, BarChart3, LogOut, Menu, Settings, CheckCircle, Radio, CheckSquare, Coins, ChevronLeft, ChevronRight } from 'lucide-react';
 import { LogoBossDirecting } from './BrandLogo';
 import clsx from 'clsx';
 import { useNotifications } from '../hooks/useNotifications';
@@ -11,6 +11,7 @@ const Layout = () => {
     const { user, logout } = useAuth();
     const { getSettings, tasks, timeOffRequests, schedules, incentiveReports, getManagerNames, isLoaded, settings: allStoreSettings } = useStore();
     const [sidebarOpen, setSidebarOpen] = useState(true);
+    const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
     const location = useLocation();
 
     // Enable Global Notifications
@@ -126,10 +127,12 @@ const Layout = () => {
     // BeManager Logo Component
     const Logo = () => (
         <div className="flex flex-col items-center gap-2 mb-6">
-            <div className={`transition-all duration-300 ${sidebarOpen ? 'w-16 h-16' : 'w-10 h-10'}`}>
+            <div className={`transition-all duration-300 ${(sidebarOpen || desktopSidebarOpen) ? 'w-16 h-16' : 'w-10 h-10'}`}>
                 <LogoBossDirecting className="w-full h-full" />
             </div>
-            {sidebarOpen && <span className="text-sm font-bold text-slate-700 tracking-wide mt-2">BeManager</span>}
+            {(sidebarOpen || desktopSidebarOpen) && !(!sidebarOpen && !desktopSidebarOpen) && (
+                <span className="text-sm font-bold text-slate-700 tracking-wide mt-2">BeManager</span>
+            )}
         </div>
     );
 
@@ -209,11 +212,22 @@ const Layout = () => {
                     isDarkMode
                         ? "backdrop-blur-2xl bg-slate-900/70 border-slate-800 shadow-[0_15px_30px_-5px_rgba(0,0,0,0.3)]"
                         : "backdrop-blur-2xl bg-white/80 border-white/60 shadow-[0_15px_30px_-5px_rgba(0,0,0,0.05)]",
-                    sidebarOpen ? "w-72" : "w-[96px] -translate-x-[150%] md:translate-x-0"
+                    sidebarOpen ? "w-72" : "w-72 -translate-x-full md:translate-x-0 md:w-[96px]",
+                    !desktopSidebarOpen && "md:w-[96px]"
                 )}
             >
-                <div className={clsx("py-8 flex flex-col items-center border-b mb-2", isDarkMode ? "border-slate-800" : "border-slate-100/50")}>
+                <div className={clsx("py-8 flex flex-col items-center border-b mb-2 relative", isDarkMode ? "border-slate-800" : "border-slate-100/50")}>
                     <Logo />
+                    {/* Desktop Toggle Button */}
+                    <button
+                        onClick={() => setDesktopSidebarOpen(!desktopSidebarOpen)}
+                        className={clsx(
+                            "absolute -right-4 top-10 w-8 h-8 rounded-full border flex items-center justify-center transition-all bg-white shadow-md z-50 hidden md:flex",
+                            isDarkMode ? "bg-slate-900 border-slate-700 text-slate-400 hover:text-white" : "bg-white border-slate-200 text-slate-500 hover:text-indigo-600"
+                        )}
+                    >
+                        {desktopSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+                    </button>
                 </div>
 
                 <nav className="flex-1 px-4 space-y-3 overflow-y-auto flex flex-col items-center mt-2 custom-scrollbar">
@@ -221,10 +235,10 @@ const Layout = () => {
                         <NavLink
                             key={item.to}
                             to={item.to}
-                            title={!sidebarOpen ? item.label : undefined}
+                            title={!(sidebarOpen && desktopSidebarOpen) ? item.label : undefined}
                             className={({ isActive }) => clsx(
                                 "relative flex items-center justify-center transition-all duration-300 group cursor-pointer",
-                                sidebarOpen ? "w-full px-5 py-4 rounded-[1.5rem] gap-4 justify-start" : "w-14 h-14 rounded-[1.5rem]",
+                                (sidebarOpen && desktopSidebarOpen) ? "w-full px-5 py-4 rounded-[1.5rem] gap-4 justify-start" : "w-14 h-14 rounded-[1.5rem]",
                                 isActive
                                     ? (isDarkMode ? "bg-indigo-600/20 text-indigo-300 shadow-lg shadow-indigo-900/20 border border-indigo-500/30" : "bg-slate-900 text-white shadow-lg shadow-slate-900/20")
                                     : (isDarkMode ? "text-slate-400 hover:bg-slate-800 hover:text-indigo-300" : "text-slate-500 hover:bg-slate-50 hover:text-indigo-600"),
@@ -252,7 +266,7 @@ const Layout = () => {
                                     )}
 
                                     {/* Label (Expanded mode) */}
-                                    {sidebarOpen && (
+                                    {(sidebarOpen && desktopSidebarOpen) && (
                                         <span className={clsx("font-bold text-sm tracking-wide relative z-10")}>{item.label}</span>
                                     )}
                                 </>
@@ -264,17 +278,17 @@ const Layout = () => {
                 <div className={clsx("p-5 mt-auto border-t flex flex-col items-center gap-4", isDarkMode ? "border-slate-800" : "border-slate-100/50")}>
                     <NavLink
                         to={isSupervisor ? "/supervision/settings" : "/settings"}
-                        title={!sidebarOpen ? 'Configuración' : undefined}
+                        title={!(sidebarOpen && desktopSidebarOpen) ? 'Configuración' : undefined}
                         className={({ isActive }) => clsx(
                             "relative flex items-center justify-center transition-all duration-300 group cursor-pointer",
-                            sidebarOpen ? "w-full px-5 py-3 rounded-2xl gap-3 justify-start" : "w-12 h-12 rounded-2xl",
+                            (sidebarOpen && desktopSidebarOpen) ? "w-full px-5 py-3 rounded-2xl gap-3 justify-start" : "w-12 h-12 rounded-2xl",
                             isActive
                                 ? (isDarkMode ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30" : "bg-slate-100 text-indigo-600 border border-slate-200")
                                 : (isDarkMode ? "text-slate-400 hover:text-indigo-300" : "text-slate-500 hover:text-indigo-600")
                         )}
                     >
                         <Settings size={20} />
-                        {sidebarOpen && <span className="font-bold text-sm">Configuración</span>}
+                        {(sidebarOpen && desktopSidebarOpen) && <span className="font-bold text-sm">Configuración</span>}
                     </NavLink>
 
                     <button
@@ -283,11 +297,11 @@ const Layout = () => {
                         className={clsx(
                             "flex items-center justify-center transition-all duration-300",
                             isDarkMode ? "text-slate-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20" : "text-slate-400 hover:text-red-500 hover:bg-red-50 hover:border-red-100",
-                            sidebarOpen ? "w-full gap-3 px-4 py-3 rounded-2xl border border-transparent" : "w-12 h-12 rounded-2xl"
+                            (sidebarOpen && desktopSidebarOpen) ? "w-full gap-3 px-4 py-3 rounded-2xl border border-transparent" : "w-12 h-12 rounded-2xl"
                         )}
                     >
                         <LogOut size={20} />
-                        {sidebarOpen && <span className="font-bold text-sm">Salir</span>}
+                        {(sidebarOpen && desktopSidebarOpen) && <span className="font-bold text-sm">Salir</span>}
                     </button>
                 </div>
             </aside>

@@ -5,7 +5,6 @@ import {
     Clock,
     Moon,
     Palmtree,
-    Stethoscope,
     CheckCircle,
     Activity,
     Store,
@@ -49,6 +48,7 @@ interface RestingEmployee extends Employee {
 
 interface AbsentEmployee extends Employee {
     storeName: string;
+    type?: string;
 }
 
 // Helper components & functions
@@ -282,7 +282,8 @@ const SupervisorLive: React.FC = () => {
         } else if (todayShift?.type === 'sick_leave' || todayShift?.type === 'maternity_paternity') {
             sickToday.push({
                 ...emp,
-                storeName
+                storeName,
+                type: todayShift.type
             });
         } else {
             let reason = 'Descanso';
@@ -571,7 +572,7 @@ const SupervisorLive: React.FC = () => {
                     <div className="space-y-6">
 
                         {/* Active Sick Leaves Today Card (Reordered & Always Visible) */}
-                        <div className="bg-gradient-to-br from-red-900/20 to-rose-900/20 border border-red-500/20 rounded-[3rem] p-8 backdrop-blur-sm">
+                        <div className="bg-gradient-to-br from-red-900/10 to-rose-900/10 border border-red-500/20 rounded-[3rem] p-8 backdrop-blur-sm">
                             <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-3">
                                 <div className="p-2 bg-red-500/20 rounded-xl text-red-500">
                                     <Activity size={20} />
@@ -585,14 +586,24 @@ const SupervisorLive: React.FC = () => {
                             ) : (
                                 <div className="space-y-4">
                                     {sickToday.map(emp => (
-                                        <div key={emp.id} className="flex items-center gap-4 p-4 bg-slate-950/50 rounded-2xl border border-white/5 hover:bg-slate-900/50 transition-colors">
-                                            <div className="h-10 w-10 rounded-xl bg-red-500/10 text-red-500 flex items-center justify-center font-bold text-xs ring-1 ring-red-500/20">
-                                                {getInitials(emp)}
+                                        <div key={emp.id} className="flex items-center justify-between p-4 bg-slate-950/50 rounded-2xl border border-white/5 hover:bg-slate-900/50 transition-colors">
+                                            <div className="flex items-center gap-4">
+                                                <div className="h-10 w-10 rounded-xl bg-red-500/10 text-red-500 flex items-center justify-center font-bold text-xs ring-1 ring-red-500/20">
+                                                    {getInitials(emp)}
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-bold text-slate-200">{emp.name}</p>
+                                                    <p className="text-xs text-slate-500">{emp.storeName}</p>
+                                                </div>
                                             </div>
-                                            <div>
-                                                <p className="text-sm font-bold text-slate-200">{emp.name}</p>
-                                                <p className="text-xs text-slate-500">{emp.storeName}</p>
-                                            </div>
+                                            <span className={clsx(
+                                                "text-[10px] px-2.5 py-1 rounded-lg font-black tracking-wider border",
+                                                emp.type === 'maternity_paternity'
+                                                    ? "bg-pink-500/10 text-pink-400 border-pink-500/20"
+                                                    : "bg-red-500/10 text-red-400 border-red-500/20"
+                                            )}>
+                                                {emp.type === 'maternity_paternity' ? 'MAT/PAT' : 'IT'}
+                                            </span>
                                         </div>
                                     ))}
                                 </div>
@@ -657,30 +668,7 @@ const SupervisorLive: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Active Sick Leaves Card (Long Term) */}
-                        {onSickLeaveWeek.length > 0 && (
-                            <div className="bg-gradient-to-br from-red-900/20 to-rose-900/20 border border-red-500/20 rounded-[3rem] p-8 backdrop-blur-sm">
-                                <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-3">
-                                    <div className="p-2 bg-red-500/20 rounded-xl text-red-400">
-                                        <Stethoscope size={20} />
-                                    </div>
-                                    Bajas Médicas Activas
-                                </h3>
-                                <div className="space-y-4">
-                                    {onSickLeaveWeek.map(emp => (
-                                        <div key={emp.id} className="flex items-center gap-4 p-4 bg-slate-950/50 rounded-2xl border border-white/5 hover:bg-slate-900/50 transition-colors">
-                                            <div className="h-10 w-10 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center ring-1 ring-red-500/20">
-                                                <Activity size={16} />
-                                            </div>
-                                            <div>
-                                                <p className="text-sm font-bold text-slate-200">{emp.name}</p>
-                                                <p className="text-xs text-slate-500">{emp.storeName}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+
 
                     </div>
                 </div>

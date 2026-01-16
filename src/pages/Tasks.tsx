@@ -1208,76 +1208,170 @@ const Tasks = () => {
                     const isInProgress = status === 'in_progress';
                     const isPending = status === 'pending';
 
+                    // Progress Calculation for Time Remaining
+                    const getTaskTimeProgress = () => {
+                        const now = new Date();
+                        let startDate: Date;
+                        let endDate: Date;
+
+                        if (task.type === 'specific_date' && task.date) {
+                            startDate = new Date(task.date);
+                            startDate.setHours(0, 0, 0, 0);
+                            endDate = new Date(startDate.getTime() + (task.durationDays || 1) * 24 * 60 * 60 * 1000);
+                        } else if (task.isCyclical) {
+                            const today = new Date();
+                            startDate = new Date(today);
+                            if (task.cycleUnit === 'months') {
+                                startDate.setDate(task.cyclicalDayOfMonth || 1);
+                                startDate.setHours(0, 0, 0, 0);
+                                if (today.getDate() < (task.cyclicalDayOfMonth || 1)) {
+                                    startDate.setMonth(startDate.getMonth() - 1);
+                                }
+                            } else {
+                                const dayOfWeek = today.getDay();
+                                const targetDay = task.cyclicalDayOfWeek || 0;
+                                const diff = (dayOfWeek - targetDay + 7) % 7;
+                                startDate.setDate(today.getDate() - diff);
+                                startDate.setHours(0, 0, 0, 0);
+                            }
+                            endDate = new Date(startDate.getTime() + (task.durationDays || 1) * 24 * 60 * 60 * 1000);
+                        } else {
+                            return null;
+                        }
+
+                        const total = endDate.getTime() - startDate.getTime();
+                        const elapsed = now.getTime() - startDate.getTime();
+                        const progress = Math.min(100, Math.max(0, (elapsed / total) * 100));
+
+                        const remainingMs = endDate.getTime() - now.getTime();
+                        const remainingHours = Math.max(0, Math.floor(remainingMs / (1000 * 60 * 60)));
+                        const remainingDays = Math.floor(remainingHours / 24);
+
+                        let label = '';
+                        if (remainingMs < 0) label = 'Expirado';
+                        else if (remainingDays > 0) label = `${remainingDays}d ${remainingHours % 24}h restantes`;
+                        else if (remainingHours > 0) label = `${remainingHours}h restantes`;
+                        else label = 'Menos de 1h';
+
+                        return { progress, label, isUrgent: progress > 80 };
+                    };
+
+                    const timeProgress = getTaskTimeProgress();
+
                     return (
-                        <div key={task.id} className={clsx("bg-white p-6 rounded-2xl border shadow-sm transition-all hover:shadow-md flex flex-col md:flex-row gap-6", isCompleted ? "border-slate-200 opacity-75 grayscale-[0.5]" : "border-slate-200")}>
-                            {/* Left: Indicator */}
-                            <div className={clsx("w-2 h-full rounded-full hidden md:block shrink-0",
-                                task.priority === 'critical' ? 'bg-red-500' :
-                                    task.priority === 'high' ? 'bg-orange-500' :
-                                        task.priority === 'medium' ? 'bg-amber-400' : 'bg-blue-400'
+                        <div
+                            key={task.id}
+                            className={clsx(
+                                "group bg-white rounded-[2rem] border border-slate-100 shadow-sm transition-all duration-500 hover:shadow-2xl hover:shadow-indigo-500/10 hover:scale-[1.01] overflow-hidden flex flex-col md:flex-row",
+                                isCompleted && "opacity-60 grayscale-[0.8]"
+                            )}
+                        >
+                            {/* Priority Accent */}
+                            <div className={clsx(
+                                "w-2 shrink-0 h-2 md:h-auto md:w-2.5",
+                                task.priority === 'critical' ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.3)]' :
+                                    task.priority === 'high' ? 'bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.3)]' :
+                                        task.priority === 'medium' ? 'bg-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.3)]' :
+                                            'bg-indigo-400 shadow-[0_0_15px_rgba(129,140,248,0.3)]'
                             )}></div>
 
-                            {/* Content */}
-                            <div className="flex-1">
-                                <div className="flex flex-wrap gap-2 mb-2">
-                                    <span className={clsx("text-xs font-bold px-2 py-0.5 rounded-md border", getPriorityColor(task.priority))}>
-                                        {getPriorityLabel(task.priority)}
-                                    </span>
-                                    <span className="flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
-                                        {task.type === 'specific_date' ? <Calendar size={12} /> : <RotateCcw size={12} />}
-                                        {task.type === 'specific_date' ? 'Puntual' : 'Recurrente'}
-                                    </span>
-                                    {task.date ? (
-                                        <span className={clsx(
-                                            "flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-md border shadow-sm",
-                                            new Date(task.date) < new Date(new Date().setHours(0, 0, 0, 0))
-                                                ? "bg-red-50 text-red-600 border-red-100 animate-pulse"
-                                                : "bg-indigo-50 text-indigo-700 border-indigo-100 font-bold"
+                            {/* Main Content */}
+                            <div className="flex-1 p-8">
+                                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+                                    <div className="flex-1">
+                                        <div className="flex flex-wrap items-center gap-2 mb-4">
+                                            <span className={clsx(
+                                                "text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest border",
+                                                getPriorityColor(task.priority)
+                                            )}>
+                                                {getPriorityLabel(task.priority)}
+                                            </span>
+                                            <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
+                                                {task.type === 'specific_date' ? <Calendar size={12} className="text-indigo-400" /> : <RotateCcw size={12} className="text-pink-400" />}
+                                                {task.type === 'specific_date' ? 'Puntual' : 'Recurrente'}
+                                            </span>
+                                        </div>
+
+                                        <h3 className={clsx(
+                                            "text-2xl font-black mb-3 tracking-tight transition-colors",
+                                            isCompleted ? "text-slate-400 line-through" : "text-slate-900 group-hover:text-indigo-600"
                                         )}>
-                                            <Clock size={12} />
-                                            {getDaysRemainingLabel(task.date)}
-                                        </span>
-                                    ) : task.isCyclical && (
-                                        <span className="flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
-                                            <Clock size={12} className="text-indigo-500" /> Duración: {task.durationDays || 1} días
-                                        </span>
+                                            {task.title}
+                                        </h3>
+                                        <p className="text-slate-500 text-sm leading-relaxed font-medium max-w-2xl line-clamp-3">
+                                            {task.description}
+                                        </p>
+                                    </div>
+
+                                    {/* Progress Circle or Bar Area */}
+                                    {!isCompleted && timeProgress && (
+                                        <div className="w-full lg:w-64 bg-slate-50 rounded-[1.5rem] p-5 border border-slate-100/50">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                                                    <Clock size={12} className={clsx(timeProgress.isUrgent ? "text-rose-500 animate-pulse" : "text-indigo-400")} />
+                                                    Tiempo Restante
+                                                </span>
+                                                <span className={clsx(
+                                                    "text-[11px] font-black whitespace-nowrap",
+                                                    timeProgress.isUrgent ? "text-rose-600" : "text-slate-700"
+                                                )}>
+                                                    {timeProgress.label}
+                                                </span>
+                                            </div>
+                                            <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden p-0.5 shadow-inner">
+                                                <div
+                                                    className={clsx(
+                                                        "h-full rounded-full transition-all duration-1000 ease-out shadow-[0_0_10px_rgba(99,102,241,0.2)]",
+                                                        timeProgress.progress > 80 ? "bg-gradient-to-r from-rose-500 to-rose-400" :
+                                                            timeProgress.progress > 50 ? "bg-gradient-to-r from-amber-500 to-amber-400" :
+                                                                "bg-gradient-to-r from-indigo-600 to-indigo-400"
+                                                    )}
+                                                    style={{ width: `${100 - timeProgress.progress}%` }}
+                                                />
+                                            </div>
+                                        </div>
                                     )}
                                 </div>
-                                <h3 className={clsx("text-xl font-bold mb-2", isCompleted ? "text-slate-500 line-through" : "text-slate-800")}>{task.title}</h3>
-                                <p className="text-slate-600 text-sm leading-relaxed">{task.description}</p>
                             </div>
 
-                            {/* Actions */}
-                            <div className="flex flex-col items-end justify-center min-w-[180px] gap-3 border-t md:border-t-0 md:border-l border-slate-100 md:pl-6 pt-4 md:pt-0">
-                                <div className={clsx("px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide border", getStatusColor(status))}>
+                            {/* Vertical Actions Panel */}
+                            <div className="bg-slate-50/50 border-t md:border-t-0 md:border-l border-slate-100 p-8 flex flex-col items-center justify-center gap-4 min-w-[200px]">
+                                <div className={clsx(
+                                    "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border shadow-sm",
+                                    getStatusColor(status)
+                                )}>
                                     {status === 'pending' ? 'Pendiente' : status === 'in_progress' ? 'En Curso' : 'Completada'}
                                 </div>
 
-                                <div className="flex flex-col gap-2 w-full">
+                                <div className="w-full space-y-3">
                                     {isPending && (
                                         <button
                                             onClick={() => handleStatusChange(task.id, 'in_progress')}
-                                            className="flex items-center justify-center gap-2 w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-blue-200 hover:scale-[1.02]"
+                                            className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl transition-all shadow-lg shadow-indigo-600/20 active:scale-95 flex items-center justify-center gap-3 text-xs uppercase tracking-[0.15em]"
                                         >
-                                            <PlayCircle size={16} /> Iniciar
+                                            <PlayCircle size={20} />
+                                            Iniciar
                                         </button>
                                     )}
                                     {isInProgress && (
                                         <button
                                             onClick={() => handleStatusChange(task.id, 'completed')}
-                                            className="flex items-center justify-center gap-2 w-full py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-green-200 hover:scale-[1.02]"
+                                            className="w-full h-14 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl transition-all shadow-lg shadow-emerald-600/20 active:scale-95 flex items-center justify-center gap-3 text-xs uppercase tracking-[0.15em]"
                                         >
-                                            <CheckCircle2 size={16} /> Finalizar
+                                            <CheckCircle2 size={20} />
+                                            Finalizar
                                         </button>
                                     )}
                                     {isCompleted && (
-                                        <div className="flex flex-col items-center justify-center gap-1 text-[10px] text-slate-400 font-medium w-full py-2 italic">
-                                            <div className="flex items-center gap-1">
-                                                <CheckCircle2 size={12} className="text-emerald-500" />
-                                                Finalizada por {task.status[user?.establishmentId || '']?.completedByInitials || 'Gerente'}
+                                        <div className="flex flex-col items-center text-center gap-2">
+                                            <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 border border-emerald-200 shadow-sm">
+                                                <CheckCircle2 size={20} />
                                             </div>
-                                            <div className="text-[9px] opacity-70">
-                                                {task.status[user?.establishmentId || '']?.lastUpdated && new Date(task.status[user?.establishmentId || '']?.lastUpdated!).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                            <div className="space-y-1">
+                                                <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">Verificada</p>
+                                                <p className="text-[9px] font-bold text-slate-400 uppercase">
+                                                    {task.status[user?.establishmentId || '']?.completedByInitials || 'Gerente'} • {task.status[user?.establishmentId || '']?.lastUpdated && new Date(task.status[user?.establishmentId || '']?.lastUpdated!).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                                </p>
                                             </div>
                                         </div>
                                     )}

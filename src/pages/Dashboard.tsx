@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { FilterSelect } from '../components/FilterSelect';
 import AnnualPlanModal from '../components/AnnualPlanModal';
+import ILTReportModal from '../components/employees/ILTReportModal';
 import SupervisorDashboard from './SupervisorDashboard';
 import { clsx } from 'clsx';
 
@@ -32,6 +33,26 @@ const DashboardPage: React.FC = () => {
     } = useStore();
     const { showToast } = useToast();
 
+    // Memoize published weeks for efficiency (Admin sees all, manager sees their store)
+    const publishedWeeks = useMemo(() => {
+        if (!user) return new Set<string>();
+        return new Set(
+            schedules
+                .filter(s => s.status === 'published' && (user.role === 'admin' || s.establishmentId === user.establishmentId))
+                .map(s => s.weekStartDate)
+        );
+    }, [schedules, user]);
+
+    const isDateInPublishedWeek = (date: Date) => {
+        const d = new Date(date);
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        const monday = new Date(d);
+        monday.setDate(diff);
+        const mondayStr = monday.toISOString().split('T')[0];
+        return publishedWeeks.has(mondayStr);
+    };
+
     // UI States
     const [isDebtHistoryOpen, setIsDebtHistoryOpen] = useState(false);
     const [isDebtSummaryOpen, setIsDebtSummaryOpen] = useState(false);
@@ -45,6 +66,8 @@ const DashboardPage: React.FC = () => {
     const [isAnnualPlanOpen, setIsAnnualPlanOpen] = useState(false);
     const [debtTab, setDebtTab] = useState<'balance' | 'adjust' | 'pay' | 'history'>('balance');
     const [selectedDebtMonth, setSelectedDebtMonth] = useState<number | 'all'>('all');
+    const [isILTModalOpen, setIsILTModalOpen] = useState(false);
+    const [iltModalTab, setIltModalTab] = useState<'current' | 'history'>('current');
 
     const [alertState, setAlertState] = useState<Record<string, number>>(() => {
         try {
@@ -170,9 +193,16 @@ const DashboardPage: React.FC = () => {
         setPayIncentivesData({ employeeId: '', amount: '', targetMonth: '' });
     };
 
-    const calculatePerformance = (itDays: number, matDays: number) => {
-        // Baseline 100%, subtract for absenteeism
-        const score = 100 - (itDays * 1.5) - (matDays * 0.5);
+    const calculatePerformance = (itDays: number, matDays: number, totalDays: number = 0) => {
+        // If no days were evaluated, performance is 0%
+        if (totalDays === 0) return 0;
+
+        // Proportional penalty: missing all days = 0%
+        // We weight IT more than Mat/Pat (Mat/Pat only penalizes 33% compared to IT)
+        const totalPenaltyDays = itDays + (matDays * 0.33);
+        const penaltyPercentage = (totalPenaltyDays / totalDays) * 100;
+
+        const score = 100 - penaltyPercentage;
         return Math.max(0, Math.min(100, Math.round(score)));
     };
 
@@ -702,6 +732,35 @@ const DashboardPage: React.FC = () => {
                         </div>
                         <span>Plan Anual</span>
                     </button>
+
+                    {(() => {
+                        const now = new Date();
+                        const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                        const isSaved = iltReports.some(r => r.establishmentId === user.establishmentId && r.month === currentMonthStr);
+                        const isPeriod = now.getDate() >= 22;
+
+                        if (isPeriod && !isSaved) {
+                            return (
+                                <button
+                                    onClick={() => {
+                                        setIltModalTab('current');
+                                        setIsILTModalOpen(true);
+                                    }}
+                                    className="px-5 py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-[1.5rem] hover:bg-slate-50 hover:border-indigo-200 hover:shadow-lg transition-all flex items-center gap-3 shadow-sm group relative"
+                                >
+                                    <div className="absolute -inset-0.5 bg-indigo-500 rounded-[1.5rem] blur opacity-10 group-hover:opacity-20 transition duration-1000"></div>
+                                    <div className="p-2 bg-slate-100 rounded-full group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors relative">
+                                        <FileText size={20} />
+                                    </div>
+                                    <span className="relative">Generar Informe ILT</span>
+                                    <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-[10px] font-black text-white border-2 border-white animate-bounce shadow-sm">
+                                        !
+                                    </div>
+                                </button>
+                            );
+                        }
+                        return null;
+                    })()}
 
                     <div className="relative">
                         <button
@@ -1580,20 +1639,24 @@ const DashboardPage: React.FC = () => {
                                         {myEmployees.filter(e => e.active).map(emp => {
                                             const currentYear = new Date().getFullYear();
 
+
                                             // Helper to count days for a specific year and type
                                             const countDays = (type: 'sick_leave' | 'maternity_paternity', year: number) => {
                                                 return timeOffRequests
                                                     .filter(r => r.employeeId === emp.id && r.type === type)
                                                     .reduce((acc, req) => {
                                                         if (req.dates && req.dates.length > 0) {
-                                                            return acc + req.dates.filter(d => new Date(d).getFullYear() === year).length;
+                                                            return acc + req.dates.filter(d => {
+                                                                const date = new Date(d);
+                                                                return date.getFullYear() === year && isDateInPublishedWeek(date);
+                                                            }).length;
                                                         }
                                                         if (req.startDate && req.endDate) {
                                                             const s = new Date(req.startDate);
                                                             const e = new Date(req.endDate);
                                                             let days = 0;
                                                             for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-                                                                if (d.getFullYear() === year) days++;
+                                                                if (d.getFullYear() === year && isDateInPublishedWeek(d)) days++;
                                                             }
                                                             return acc + days;
                                                         }
@@ -1601,9 +1664,14 @@ const DashboardPage: React.FC = () => {
                                                     }, 0);
                                             };
 
+                                            // Get number of days in published weeks for this employee
+                                            const publishedWeeks = schedules.filter(s => s.establishmentId === user.establishmentId && s.status === 'published' && s.weekStartDate.startsWith(currentYear.toString()));
+                                            // Each published week has 7 days.
+                                            const totalPublishedDays = publishedWeeks.length * 7;
+
                                             const itDays = countDays('sick_leave', currentYear);
                                             const matDays = countDays('maternity_paternity', currentYear);
-                                            const perf = calculatePerformance(itDays, matDays);
+                                            const perf = calculatePerformance(itDays, matDays, totalPublishedDays);
 
                                             return (
                                                 <tr key={emp.id} className="group hover:bg-slate-50 transition-colors">
@@ -1815,21 +1883,20 @@ const DashboardPage: React.FC = () => {
                                             {myEmployees.filter(e => e.active).map(emp => {
                                                 const currentYear = dashboardYear;
 
-                                                // approvedWeekStarts is computed once for performance
-                                                const approvedWeekStarts = new Set(
-                                                    schedules
-                                                        .filter(s => s.establishmentId === user.establishmentId && s.approvalStatus === 'approved')
-                                                        .map(s => s.weekStartDate)
-                                                );
-
-                                                const isDateInApprovedWeek = (date: Date) => {
-                                                    const d = new Date(date);
-                                                    const day = d.getDay();
-                                                    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-                                                    const monday = new Date(d);
-                                                    monday.setDate(diff);
-                                                    const mondayStr = monday.toISOString().split('T')[0];
-                                                    return approvedWeekStarts.has(mondayStr);
+                                                // Helper to calculate worked hours for a specific year
+                                                const getWorkedHours = (year: number) => {
+                                                    if (!user) return 0;
+                                                    return schedules
+                                                        .filter(s => s.establishmentId === user.establishmentId && s.status === 'published' && s.weekStartDate.startsWith(year.toString()))
+                                                        .reduce((acc, s) => {
+                                                            const shifts = s.shifts.filter(sh => sh.employeeId === emp.id);
+                                                            const worked = shifts.reduce((sum, sh) => {
+                                                                if (sh.type === 'split') return sum + 8;
+                                                                if (sh.type === 'morning' || sh.type === 'afternoon') return sum + 4;
+                                                                return sum;
+                                                            }, 0);
+                                                            return acc + worked;
+                                                        }, 0);
                                                 };
 
                                                 // Calculation Helpers
@@ -1841,7 +1908,7 @@ const DashboardPage: React.FC = () => {
                                                             if (req.dates && req.dates.length > 0) {
                                                                 req.dates.forEach(dStr => {
                                                                     const d = new Date(dStr);
-                                                                    if ((!year || d.getFullYear() === year) && isDateInApprovedWeek(d)) {
+                                                                    if ((!year || d.getFullYear() === year) && isDateInPublishedWeek(d)) {
                                                                         days++;
                                                                     }
                                                                 });
@@ -1850,7 +1917,7 @@ const DashboardPage: React.FC = () => {
                                                                 const e = new Date(req.endDate);
                                                                 // inclusive dates
                                                                 for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-                                                                    if ((!year || d.getFullYear() === year) && isDateInApprovedWeek(d)) {
+                                                                    if ((!year || d.getFullYear() === year) && isDateInPublishedWeek(d)) {
                                                                         days++;
                                                                     }
                                                                 }
@@ -1867,7 +1934,7 @@ const DashboardPage: React.FC = () => {
                                                             if (req.dates && req.dates.length > 0) {
                                                                 req.dates.forEach(dStr => {
                                                                     const date = new Date(dStr);
-                                                                    if (date.getFullYear() === currentYear && isDateInApprovedWeek(date)) {
+                                                                    if (date.getFullYear() === currentYear && isDateInPublishedWeek(date)) {
                                                                         months[date.getMonth()]++;
                                                                     }
                                                                 });
@@ -1875,7 +1942,7 @@ const DashboardPage: React.FC = () => {
                                                                 const s = new Date(req.startDate);
                                                                 const e = new Date(req.endDate);
                                                                 for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-                                                                    if (d.getFullYear() === currentYear && isDateInApprovedWeek(d)) {
+                                                                    if (d.getFullYear() === currentYear && isDateInPublishedWeek(d)) {
                                                                         months[d.getMonth()]++;
                                                                     }
                                                                 }
@@ -1891,12 +1958,14 @@ const DashboardPage: React.FC = () => {
                                                     itMonths: getMonthlyBreakdown('sick_leave'),
                                                     matYear: getDays('maternity_paternity', currentYear),
                                                     matTotal: getDays('maternity_paternity'),
-                                                    matMonths: getMonthlyBreakdown('maternity_paternity')
+                                                    matMonths: getMonthlyBreakdown('maternity_paternity'),
+                                                    workedHours: getWorkedHours(currentYear),
+                                                    currentYear
                                                 };
                                             })
                                                 .sort((a, b) => b.itYear - a.itYear)
-                                                .map(({ emp, itYear, itTotal, itMonths, matYear, matTotal, matMonths }) => {
-                                                    const perf = calculatePerformance(itYear, matYear);
+                                                .map(({ emp, itYear, itTotal, itMonths, matYear, matTotal, matMonths, workedHours }) => {
+                                                    const perf = calculatePerformance(itYear, matYear, workedHours);
                                                     const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
                                                     const renderMonths = (daysArr: number[], colorClass: string) => {
@@ -2524,6 +2593,11 @@ const DashboardPage: React.FC = () => {
 
 
 
+                <ILTReportModal
+                    isOpen={isILTModalOpen}
+                    onClose={() => setIsILTModalOpen(false)}
+                    initialTab={iltModalTab}
+                />
             </div >
         </div >
     );

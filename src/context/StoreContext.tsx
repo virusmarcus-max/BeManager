@@ -722,8 +722,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setDoc(doc(db, 'incentiveReports', report.id), report);
     };
 
-    const addILTReport = (report: ILTReport) => {
-        setDoc(doc(db, 'iltReports', report.id), report);
+    const addILTReport = async (report: ILTReport) => {
+        // Sanitize to remove undefined values which Firestore doesn't support
+        const sanitized = JSON.parse(JSON.stringify(report));
+        return setDoc(doc(db, 'iltReports', report.id), sanitized);
     };
 
     const createSchedule = (establishmentId: string, weekStartDate: string, force: boolean = false) => {
