@@ -22,7 +22,7 @@ export interface Employee {
     birthDate?: string;    // ISO Date YYYY-MM-DD
     email?: string;
     hoursDebt: number; // Positive = Employee worked extra, Negative = Employee owes hours
-    contractEndDate?: string; // ISO Date YYYY-MM-DD
+    contractEndDate?: string | null; // ISO Date YYYY-MM-DD
     contractStartDate?: string; // ISO Date YYYY-MM-DD - The actual start date of the current contract
     contractType?: 'indefinido' | 'temporal' | 'sustitucion';
     initials?: string;
@@ -58,6 +58,7 @@ export interface HoursDebtLog {
 export interface StoreSettings {
     establishmentId: string;
     storeName: string;
+    password?: string; // Optional for backward compatibility, but required for login logic
     managerName: string;
     contactEmail: string;
     phone?: string;
@@ -158,7 +159,7 @@ export interface PermanentRequest {
     exceptions?: string[]; // List of week start dates (YYYY-MM-DD) when this request is ignored
     value?: number; // Aux value (e.g., number of afternoons)
     // For Rotating Days
-    cycleWeeks?: number[][]; // Array of cycles. Index 0 = Week 1, Index 1 = Week 2. Each inner array is list of days off (0-6)
+    cycleWeeks?: { days: number[] }[]; // Array of cycles. Index 0 = Week 1, Index 1 = Week 2. Each inner array is list of days off (0-6)
     referenceDate?: string; // ISO Date YYYY-MM-DD (Week Start Date) to anchor the cycle (Week 1 starts here)
 }
 
@@ -239,6 +240,9 @@ export interface IncentiveItem {
     // Responsibility Check (Just a flag or calculated? Assuming role check at runtime, but storing the bonus amount here helps)
     responsibility_bonus_amount?: number;
 
+    // Sick Days Count (For Reference)
+    sickDays?: number;
+
     total: number; // Calculated property
 }
 
@@ -246,11 +250,12 @@ export interface IncentiveReport {
     id: string;
     establishmentId: string;
     month: string; // YYYY-MM
-    status: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'changes_requested';
+    status: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'changes_requested' | 'modification_requested';
     items: IncentiveItem[];
     submittedAt?: string;
     approvedAt?: string;
     supervisorNotes?: string;
+    managerNotes?: string;
     updatedAt: string;
 
     // Configuration Values (Set by Supervisor)

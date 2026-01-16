@@ -11,6 +11,7 @@ import SchedulePage from './pages/Schedule';
 import SettingsPage from './pages/Settings';
 import SupervisionPage from './pages/Supervision';
 import ManagerLivePage from './pages/ManagerLive';
+import SupervisorSettingsPage from './pages/SupervisorSettings';
 
 import SupervisorLivePage from './pages/SupervisorLive';
 import TasksPage from './pages/Tasks';
@@ -43,6 +44,7 @@ export default function App() {
                 <Route path="schedule" element={<SchedulePage />} />
                 <Route path="supervision" element={<SupervisionPage />} />
                 <Route path="supervision/incentives" element={<IncentivesSupervisor />} />
+                <Route path="supervision/settings" element={<SupervisorSettingsPage />} />
                 <Route path="approvals" element={<SupervisionPage />} />
                 <Route path="live" element={<SupervisorLivePage />} />
                 <Route path="tasks" element={<TasksPage />} />

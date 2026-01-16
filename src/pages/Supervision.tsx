@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
+import { useToast } from '../context/ToastContext';
 import {
     CheckCircle, XCircle, AlertCircle, Clock, Store,
     Calendar, ShieldAlert,
@@ -129,6 +130,38 @@ const SupervisionPage: React.FC = () => {
             }
             setIsRejectModalOpen(false);
             setSelectedScheduleId(null);
+        }
+    };
+
+    const { showToast } = useToast();
+
+    const handleApprove = async () => {
+        // DEBUG: Force alert to see if click works
+        // alert("Botón clickado. Iniciando aprobación...");
+
+        if (!selectedSchedule) {
+            // alert("Error: No hay horario seleccionado");
+            return;
+        }
+        try {
+            console.log("Approving schedule:", selectedSchedule.id);
+            await updateScheduleStatus(selectedSchedule.id, 'approved');
+            // alert("Proceso de aprobación finalizado (éxito)"); // Debug
+            showToast('Horario aprobado y publicado correctamente', 'success');
+        } catch (error) {
+            console.error(error);
+            showToast('Error al aprobar el horario', 'error');
+        }
+    };
+
+    const handleUnlockApprove = async () => {
+        if (!selectedSchedule) return;
+        try {
+            await respondToModificationRequest(selectedSchedule.id, 'approved');
+            showToast('Desbloqueo aprobado correctamente', 'success');
+        } catch (error) {
+            console.error(error);
+            showToast('Error al aprobar desbloqueo', 'error');
         }
     };
 
@@ -421,7 +454,7 @@ const SupervisionPage: React.FC = () => {
                                                     <XCircle size={18} /> Cancelar Solicitud
                                                 </button>
                                                 <button
-                                                    onClick={() => respondToModificationRequest(selectedSchedule.id, 'approved')}
+                                                    onClick={handleUnlockApprove}
                                                     className="px-6 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-500 transition-colors shadow-lg shadow-blue-500/20 flex items-center gap-2"
                                                 >
                                                     <CheckCircle size={18} /> Aprobar Desbloqueo
@@ -442,7 +475,7 @@ const SupervisionPage: React.FC = () => {
                                                     <ShieldAlert size={18} /> Validar
                                                 </button>
                                                 <button
-                                                    onClick={() => updateScheduleStatus(selectedSchedule.id, 'approved')}
+                                                    onClick={handleApprove}
                                                     className="px-6 py-3 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-500 transition-colors shadow-lg shadow-emerald-500/20 flex items-center gap-2"
                                                 >
                                                     <CheckCircle size={18} /> Aprobar Horario

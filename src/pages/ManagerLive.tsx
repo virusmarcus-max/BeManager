@@ -82,13 +82,15 @@ const ManagerLive: React.FC = () => {
     const restingToday: RestingEmployee[] = [];
     const sickToday: Employee[] = [];
     const onVacationWeek: Employee[] = [];
-    const onSickLeaveWeek: Employee[] = [];
+    interface SickEmployee extends Employee {
+        leaveType: 'sick_leave' | 'maternity_paternity';
+    }
+    const onSickLeaveWeek: SickEmployee[] = [];
 
     // Filter employees for this store
     const myEmployees = employees.filter(e => {
         if (e.establishmentId !== storeId) return false;
         if (!e.active) return false;
-        // Basic active check. For robust check like SupervisorLive, we could add history check if needed.
         return true;
     });
 
@@ -98,22 +100,27 @@ const ManagerLive: React.FC = () => {
         // Check for today's shift
         const todayShift = currentSchedule.shifts.find(s => s.employeeId === emp.id && s.date === todayStr);
 
-        // Check for vacations/sick leave in the whole week
+        // Check for vacations/sick leave/maternity in the whole week
         const weekShifts = currentSchedule.shifts.filter(s => s.employeeId === emp.id);
         const hasVacation = weekShifts.some(s => s.type === 'vacation');
-        const hasSickLeave = weekShifts.some(s => s.type === 'sick_leave');
+
+        // Find the specific leave type for the week
+        const sickOrMaternityShift = weekShifts.find(s => s.type === 'sick_leave' || s.type === 'maternity_paternity');
+        const hasSickLeave = !!sickOrMaternityShift;
 
         if (hasVacation && !onVacationWeek.some(x => x.id === emp.id)) onVacationWeek.push(emp);
-        if (hasSickLeave && !onSickLeaveWeek.some(x => x.id === emp.id)) onSickLeaveWeek.push(emp);
+        if (hasSickLeave && !onSickLeaveWeek.some(x => x.id === emp.id)) {
+            onSickLeaveWeek.push({ ...emp, leaveType: sickOrMaternityShift?.type as 'sick_leave' | 'maternity_paternity' });
+        }
 
         if (todayShift && !['off', 'vacation', 'sick_leave', 'maternity_paternity'].includes(todayShift.type)) {
             workingToday.push({ ...emp, shift: todayShift });
-        } else if (todayShift?.type === 'sick_leave') {
+        } else if (todayShift?.type === 'sick_leave' || todayShift?.type === 'maternity_paternity') {
             sickToday.push(emp);
         } else {
             let reason = 'Descanso';
             if (todayShift?.type === 'vacation') reason = 'Vacaciones';
-            else if (todayShift?.type === 'maternity_paternity') reason = 'Baja Maternal';
+            // Removed maternity check here as it is now handled above
             restingToday.push({ ...emp, reason });
         }
     });
@@ -306,7 +313,9 @@ const ManagerLive: React.FC = () => {
                                     </div>
                                     <div>
                                         <p className="text-sm font-bold text-slate-800">{emp.name}</p>
-                                        <p className="text-xs text-rose-500 font-medium">Baja Médica Activa</p>
+                                        <p className="text-xs text-rose-500 font-medium">
+                                            {emp.leaveType === 'maternity_paternity' ? 'Baja Maternidad/Paternidad' : 'Baja Médica Activa'}
+                                        </p>
                                     </div>
                                 </div>
                             ))}

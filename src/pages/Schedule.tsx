@@ -13,12 +13,13 @@ import { CustomSelect } from '../components/CustomSelect';
 
 import ConfirmDialog from '../components/ConfirmDialog';
 import { validatePermanentRestrictions, validateRegisterCoverage } from '../services/scheduler';
+import { TimeInput } from '../components/schedule/TimeInput';
 
 
 
 const Schedule = () => {
     const { user } = useAuth();
-    const { employees, schedules, createSchedule, updateShift, publishSchedule, getSettings, updateSettings, addTimeOff, removeTimeOff, timeOffRequests, permanentRequests, updateHoursDebt, removePermanentRequest, addPermanentRequest, requestScheduleModification, settings } = useStore();
+    const { employees, schedules, createSchedule, updateShift, publishSchedule, getSettings, updateSettings, addTimeOff, removeTimeOff, timeOffRequests, permanentRequests, removePermanentRequest, addPermanentRequest, requestScheduleModification, settings } = useStore();
     const { showToast } = useToast();
     if (!user) return null;
     const [currentWeekStart, setCurrentWeekStart] = useState<string>(() => {
@@ -195,10 +196,9 @@ const Schedule = () => {
     });
 
     const currentSchedule = schedules.find(s => s.establishmentId === user.establishmentId && s.weekStartDate === currentWeekStart);
-    // Updated Locked Logic: Locked if published AND approved AND (modification NOT approved), unless actively editing (which handles 'unlock' manually if we allowed it, but here we drive it via approval)
-    // Actually, if modificationStatus is approved, we treat it as unlocked.
     // Locked: Only if pending OR (approved AND not in modification mode)
-    const isLocked = currentSchedule?.approvalStatus === 'pending' || (currentSchedule?.approvalStatus === 'approved');
+    // Actually, if modificationStatus is approved, we treat it as unlocked.
+    const isLocked = currentSchedule?.approvalStatus === 'pending' || (currentSchedule?.approvalStatus === 'approved' && currentSchedule?.modificationStatus !== 'approved');
 
     const storeEmployees = employees.filter(e => {
         if (e.establishmentId !== user.establishmentId) return false;
@@ -320,12 +320,17 @@ const Schedule = () => {
         return { dayData, coveragePercent, totalScheduled, totalTarget };
     }, [currentSchedule, storeEmployees, timeOffRequests, currentWeekStart, user.establishmentId, getSettings, settings]);
 
-    const handleRequestModification = () => {
+    const handleRequestModification = async () => {
         if (!currentSchedule || !modificationReason.trim()) return;
-        requestScheduleModification(currentSchedule.id, modificationReason);
-        showToast('Solicitud de modificación enviada', 'success');
-        setIsModificationModalOpen(false);
-        setModificationReason('');
+        try {
+            await requestScheduleModification(currentSchedule.id, modificationReason);
+            showToast('Solicitud de modificación enviada', 'success');
+            setIsModificationModalOpen(false);
+            setModificationReason('');
+        } catch (error) {
+            console.error(error);
+            showToast('Error al enviar la solicitud', 'error');
+        }
     };
 
     const handleGenerate = async () => {
@@ -366,13 +371,9 @@ const Schedule = () => {
 
     const confirmPublish = () => {
         if (currentSchedule) {
-            // Apply debt adjustments
-            pendingDebtAdjustments.forEach(adj => {
-                updateHoursDebt(adj.empId, adj.amount, `Cierre Horario Semana ${currentSchedule.weekStartDate}`, currentSchedule.id);
-            });
-
+            // Debt adjustments will be applied when Supervisor APPROVES the schedule.
             publishSchedule(currentSchedule.id);
-            showToast('Horario publicado y ajustes de deuda aplicados', 'success');
+            showToast('Horario publicado. Las horas se ajustarán tras aprobación.', 'success');
         }
         setShowLowHoursDialog(false);
     };
@@ -611,17 +612,33 @@ const Schedule = () => {
 
 
 
-    const handleSaveSickLeave = () => {
+    const handleSaveSickLeave = async () => {
         if (!selectedEmployeeForSickLeave || selectedSickLeaveDates.length === 0) return;
 
-        // If schedule exists, update specific shifts
-        if (currentSchedule) {
-            selectedSickLeaveDates.forEach(date => {
-                const existingShift = currentSchedule.shifts.find(s => s.employeeId === selectedEmployeeForSickLeave && s.date === date);
-                if (existingShift) {
-                    updateShift(currentSchedule.id, existingShift.id, { type: 'sick_leave' });
-                }
-            });
+        // Validation: Check for overlapping sick leaves
+        const hasOverlap = timeOffRequests.some(req => {
+            if (req.employeeId !== selectedEmployeeForSickLeave || req.type !== 'sick_leave') return false;
+
+            // Check against explicit dates list
+            if (req.dates && req.dates.length > 0) {
+                const datesOverlap = req.dates.some(date => selectedSickLeaveDates.includes(date));
+                if (datesOverlap) return true;
+            }
+
+            // Check against date range (startDate - endDate)
+            if (req.startDate && req.endDate) {
+                const rangeOverlap = selectedSickLeaveDates.some(date =>
+                    date >= req.startDate! && date <= req.endDate!
+                );
+                if (rangeOverlap) return true;
+            }
+
+            return false;
+        });
+
+        if (hasOverlap) {
+            showToast('El empleado ya tiene una baja registrada en alguna de las fechas seleccionadas.', 'error');
+            return;
         }
 
         // Calculate start and end dates for "Long Term" structure consistency
@@ -629,7 +646,7 @@ const Schedule = () => {
         const startDate = sortedDates[0];
         const endDate = sortedDates[sortedDates.length - 1];
 
-        addTimeOff({
+        await addTimeOff({
             employeeId: selectedEmployeeForSickLeave,
             dates: selectedSickLeaveDates,
             startDate: startDate,
@@ -778,42 +795,99 @@ const Schedule = () => {
             }
         });
 
+        // Calculate Optimal Zoom and Padding based on employee count
+        const empCount = storeEmployees.length;
+        let zoomLevel = 0.75;
+        let cellPadding = "4px 5px";
+        let fontSize = "11px";
+
+        if (empCount > 25) {
+            zoomLevel = 0.55;
+            cellPadding = "2px 3px";
+            fontSize = "10px";
+        } else if (empCount > 15) {
+            zoomLevel = 0.65;
+            cellPadding = "3px 4px";
+            fontSize = "10px";
+        }
+
         const html = `
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Horario Semanal</title>
                 <style>
-                    @page { size: A4 landscape; margin: 10mm; }
-                    body { font-family: system-ui, -apple-system, sans-serif; padding: 20px; color: #1f2937; }
-                    h1 { text-align: center; margin-bottom: 20px; color: #111827; }
-                    table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 30px; }
-                    th, td { border: 1px solid #e5e7eb; padding: 6px; text-align: center; }
-                    th { background-color: #f9fafb; font-weight: 700; color: #374151; }
-                    .header-cell { background-color: #f3f4f6; }
-                    .employee-cell { text-align: left; font-weight: 600; width: 140px; }
-                    .shift-morning { background-color: #dbeafe; color: #1e40af; }
-                    .shift-afternoon { background-color: #ffedd5; color: #9a3412; }
-                    .shift-split { background-color: #f3e8ff; color: #6b21a8; }
-                    .shift-vacation { background-color: #ccfbf1; color: #0f766e; }
-                    .shift-off { background-color: #f3f4f6; color: #6b7280; }
+                    /* Use minimal margins to maximize space */
+                    @page { size: A4 landscape; margin: 5mm 12mm; }
+                    
+                    /* Dynamic Zoom */
+                    body { font-family: system-ui, -apple-system, sans-serif; padding: 0; margin: 0; color: #1f2937; zoom: ${zoomLevel}; }
+                    
+                    h1 { text-align: center; margin-bottom: 10px; color: #111827; font-size: 18px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; break-after: avoid; }
+                    
+                    /* Main Table Container - ensure it follows header */
+                    .schedule-container {
+                        width: 100%;
+                        display: block;
+                        page-break-inside: avoid;
+                    }
+
+                    /* Allow table to break inside IF absolutely necessary, but prefer avoid */
+                    table { width: 100%; border-collapse: collapse; font-size: ${fontSize}; table-layout: fixed; page-break-inside: avoid; }
+                    th, td { border: 1px solid #000000; padding: ${cellPadding}; text-align: center; vertical-align: middle; }
+                    th { background-color: #f3f4f6; font-weight: 800; color: #111827; padding: 6px 5px; uppercase; font-size: 10px; letter-spacing: 0.05em; border-bottom: 2px solid #000000; }
+                    
+                    .employee-cell { text-align: left; font-weight: 700; width: 130px; padding-left: 8px; color: #111827; border-right: 2px solid #000000; }
+                    .employee-meta { font-size: 9px; color: #4b5563; font-weight: 500; display: block; margin-top: 1px; }
+
+                    /* Shift Colors */
+                    .shift-morning { background-color: #eff6ff; }
+                    .shift-afternoon { background-color: #fff7ed; } 
+                    .shift-split { background-color: #f0fdf4; }
+                    .shift-vacation { background-color: #fef2f2; }
+                    .shift-off { background-color: #f9fafb; color: #9ca3af; }
                     .shift-holiday { background-color: #fee2e2; color: #991b1b; }
                     .shift-sick { background-color: #fef9c3; color: #854d0e; }
                     
-                    .debt-heading { font-size: 14px; font-weight: 800; margin-bottom: 10px; border-bottom: 2px solid #e5e7eb; padding-bottom: 5px; color: #374151; }
-                    .debt-table { max-width: 600px; margin-left: 0; }
+                    /* DEBT PAGE STYLES */
+                    .debt-section { page-break-before: always; break-before: page; margin-top: 0; padding-top: 20px; }
+                    .debt-heading { font-size: 16px; font-weight: 800; margin-bottom: 15px; border-bottom: 2px solid #000000; padding-bottom: 10px; color: #374151; }
+                    .debt-table { max-width: 600px; margin-left: 0; font-size: 12px; }
                     .debt-positive { color: #059669; font-weight: 700; }
                     .debt-negative { color: #dc2626; font-weight: 700; }
-                    .print-footer { margin-top: 30px; text-align: center; font-size: 10px; color: #9ca3af; border-top: 1px solid #f3f4f6; padding-top: 10px; }
+                    .print-footer { margin-top: 30px; text-align: center; font-size: 10px; color: #9ca3af; border-top: 1px solid #000000; padding-top: 10px; }
+                    
+                    .role-pill { display: inline-block; font-weight: 700; font-size: 9px; padding: 1px 4px; border-radius: 4px; margin-bottom: 2px; text-transform: uppercase; border: 1px solid rgba(0,0,0,0.1); }
+                    .ind-indicator { display: inline-flex; justify-content: center; align-items: center; width: 14px; height: 14px; border-radius: 4px; font-size: 9px; font-weight: 900; color: white; margin-right: 2px; margin-bottom: 2px; }
                 </style>
             </head>
             <body>
+                <div style="position: absolute; top: 10px; right: 20px; display: flex; flex-direction: column; align-items: flex-end;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 10px; color: #64748b; font-weight: 600;">Creado con</span>
+                        <div style="display: flex; align-items: center; gap: 4px;">
+                             <svg width="18" height="18" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M64 10 L118 50 V110 H10 V50 L64 10 Z" fill="#e2e8f0" stroke="#64748b" stroke-width="6" stroke-linejoin="round" />
+                                <g fill="#7c3aed">
+                                    <circle cx="64" cy="45" r="16" />
+                                    <path d="M42 68 Q29 55 19 45 L30 34 Q44 50 52 68 L52 90 L76 90 L76 68 Q84 50 98 34 L109 45 Q99 55 86 68 L86 110 L42 110 Z" />
+                                </g>
+                            </svg>
+                            <span style="font-size: 14px; font-weight: 800; color: #7c3aed;">BeManager</span>
+                        </div>
+                    </div>
+                </div>
+
                 <h1>Horario Semanal: ${new Date(weekDates[0]).toLocaleDateString('es-ES')} - ${new Date(weekDates[6]).toLocaleDateString('es-ES')}</h1>
                 <table>
                     <thead>
                         <tr>
-                            <th class="header-cell">Empleado</th>
-                            ${weekDates.map(date => `<th class="header-cell">${new Date(date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'short' })}</th>`).join('')}
+                            <th style="width: 140px; font-size: 13px;">Empleado</th>
+                            ${weekDates.map(date => {
+            const d = new Date(date);
+            const dayName = d.toLocaleDateString('es-ES', { weekday: 'long' }).toUpperCase();
+            const dayNumber = d.getDate();
+            return `<th style="font-size: 13px;">${dayName} ${dayNumber}</th>`;
+        }).join('')}
                         </tr>
                     </thead>
                     <tbody>
@@ -828,24 +902,31 @@ const Schedule = () => {
 
                 const roleMap: Record<string, string> = { 'sales_register': 'Caja Venta', 'purchase_register': 'Caja Compra', 'shuttle': 'Lanzadera', 'cleaning': 'Limpieza' };
                 const roleName = shift.role ? roleMap[shift.role] : '';
-                const roleHtml = roleName ? `<div style="font-weight:700; font-size:10px; margin-bottom:2px; text-transform:uppercase">${roleName}</div>` : '';
-                const riHtml = shift.isIndividualMeeting ? `<div style="display:inline-block; background-color:#4f46e5; color:white; padding:1px 3px; border-radius:3px; font-size:9px; font-weight:800; margin-bottom:2px; margin-right:2px;">RI</div>` : '';
-                const openHtml = shift.isOpening ? `<div style="display:inline-block; background-color:#10b981; color:white; padding:1px 3px; border-radius:3px; font-size:9px; font-weight:800; margin-bottom:2px; margin-right:2px;">A</div>` : '';
-                const closeHtml = shift.isClosing ? `<div style="display:inline-block; background-color:#f59e0b; color:white; padding:1px 3px; border-radius:3px; font-size:9px; font-weight:800; margin-bottom:2px; margin-right:2px;">C</div>` : '';
-                const prefixHtml = `<div style="display:flex; justify-content:center; align-items:center; flex-wrap:wrap; gap:2px;">${openHtml}${closeHtml}${riHtml}${roleHtml}</div>`;
+                const roleHtml = roleName ? `<div style="font-weight:700; font-size:9px; margin-bottom:1px; text-transform:uppercase">${roleName}</div>` : '';
+                // Changed RI to REUNIÓN
+                const riHtml = shift.isIndividualMeeting ? `<div style="display:block; background-color:#4f46e5; color:white; padding:1px 4px; border-radius:3px; font-size:9px; font-weight:800; margin-bottom:2px; margin-top:1px; text-transform:uppercase;">REUNIÓN</div>` : '';
+
+                // Updated Labels: Full text for Opening/Closing
+                const openHtml = shift.isOpening ? `<div style="display:block; background-color:#10b981; color:white; padding:1px 4px; border-radius:3px; font-size:9px; font-weight:800; margin-bottom:2px; margin-top:1px; text-transform:uppercase;">APERTURA</div>` : '';
+                const closeHtml = shift.isClosing ? `<div style="display:block; background-color:#f59e0b; color:white; padding:1px 4px; border-radius:3px; font-size:9px; font-weight:800; margin-bottom:2px; margin-top:1px; text-transform:uppercase;">CIERRE</div>` : '';
+
+                const prefixHtml = `<div style="display:flex; justify-content:center; align-items:center; flex-direction:column; width:100%;">${openHtml}${closeHtml}${riHtml}${roleHtml}</div>`;
+
+                // Common style for bold hours
+                const timeStyle = "font-weight: 800; font-size: 1.05em; display: inline-block; margin-top: 1px;";
 
                 switch (shift.type) {
                     case 'morning':
                         className = 'shift-morning';
-                        content = `${prefixHtml}MAÑANA<br>${shift.startTime || '10:00'} - ${shift.endTime || '14:00'}`;
+                        content = `${prefixHtml}<span style="${timeStyle}">${shift.startTime || '10:00'} - ${shift.endTime || '14:00'}</span>`;
                         break;
                     case 'afternoon':
                         className = 'shift-afternoon';
-                        content = `${prefixHtml}TARDE<br>${shift.startTime || '16:30'} - ${shift.endTime || '20:30'}`;
+                        content = `${prefixHtml}<span style="${timeStyle}">${shift.startTime || '16:30'} - ${shift.endTime || '20:30'}</span>`;
                         break;
                     case 'split':
                         className = 'shift-split';
-                        content = `${prefixHtml}PARTIDO<br>${shift.startTime || '10:00'}-${shift.morningEndTime || settings.openingHours.morningEnd}<br>${shift.afternoonStartTime || settings.openingHours.afternoonStart}-${shift.endTime || '20:30'}`;
+                        content = `${prefixHtml}<span style="${timeStyle}">${shift.startTime || '10:00'}-${shift.morningEndTime || settings.openingHours.morningEnd}<br>${shift.afternoonStartTime || settings.openingHours.afternoonStart}-${shift.endTime || '20:30'}</span>`;
                         break;
                     case 'vacation': className = 'shift-vacation'; content = 'VACACIONES'; break;
                     case 'off': className = 'shift-off'; content = 'DESCANSO'; break;
@@ -858,13 +939,13 @@ const Schedule = () => {
                 return `<td class="${className}">${content}</td>`;
             }).join('');
 
-            return `<tr><td class="employee-cell">${emp.name}<br><span style="font-size: 10px; color: #6b7280; font-weight: 400">${emp.category}</span></td>${cells}</tr>`;
+            return `<tr><td class="employee-cell">${emp.name}<br><span style="font-size: 10px; color: #6b7280; font-weight: 400">${emp.weeklyHours}h</span></td>${cells}</tr>`;
         }).join('')}
                     </tbody>
                 </table>
 
                 ${debtSummary.length > 0 ? `
-                    <div style="page-break-inside: avoid; margin-top: 40px;">
+                    <div class="debt-section">
                         <h2 class="debt-heading">RESUMEN DE DEUDA SEMANAL</h2>
                         <table class="debt-table">
                             <thead>
@@ -893,7 +974,7 @@ const Schedule = () => {
                 ` : ''}
 
                 <div class="print-footer">
-                    Documento generado por Hour IA - ${new Date().toLocaleDateString('es-ES')} ${new Date().toLocaleTimeString('es-ES')}
+                    Documento generado por BeManager - ${new Date().toLocaleDateString('es-ES')} ${new Date().toLocaleTimeString('es-ES')}
                 </div>
                 <script>
                     window.onload = () => {
@@ -935,8 +1016,8 @@ const Schedule = () => {
                                     {new Date(weekDates[0]).getFullYear()}
                                 </span>
                             </div>
-                            <div className="text-xs font-bold text-indigo-500 bg-indigo-50 px-3 py-0.5 rounded-full mt-1">
-                                {new Date(weekDates[0]).getDate()} - {new Date(weekDates[6]).getDate()}
+                            <div className="text-xs font-bold text-indigo-500 bg-indigo-50 px-4 py-1 rounded-full mt-1 border border-indigo-100 uppercase tracking-wide">
+                                {new Date(weekDates[0]).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })} - {new Date(weekDates[6]).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })}
                             </div>
                         </div>
 
@@ -951,23 +1032,31 @@ const Schedule = () => {
                     {/* Quick Stats / Info */}
                     <div className="hidden xl:flex items-center gap-8">
                         <div className="flex flex-col items-end">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estado del Horario</span>
-                            <div className="flex items-center gap-2 mt-1">
-                                {currentSchedule?.approvalStatus === 'approved' ? (
-                                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold border border-emerald-200">
-                                        <CheckCircle size={14} className="fill-emerald-500 text-emerald-100" /> Aprobado
+                            <span className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1.5">Estado del Horario</span>
+                            <div className="flex items-center gap-2">
+                                {currentSchedule?.modificationStatus === 'requested' ? (
+                                    <span className="flex items-center gap-2 px-5 py-2 rounded-full bg-orange-50 text-orange-600 text-sm font-black border border-orange-200 shadow-sm animate-pulse">
+                                        <Clock size={18} className="fill-orange-500 text-orange-100" /> SOLICITUD ENVIADA
+                                    </span>
+                                ) : currentSchedule?.modificationStatus === 'approved' ? (
+                                    <span className="flex items-center gap-2 px-5 py-2 rounded-full bg-blue-50 text-blue-600 text-sm font-black border border-blue-200 shadow-sm">
+                                        <CheckCircle size={18} className="fill-blue-500 text-blue-100" /> DESBLOQUEADO
+                                    </span>
+                                ) : currentSchedule?.approvalStatus === 'approved' ? (
+                                    <span className="flex items-center gap-2 px-5 py-2 rounded-full bg-emerald-50 text-emerald-600 text-sm font-black border border-emerald-200 shadow-sm">
+                                        <CheckCircle size={18} className="fill-emerald-500 text-emerald-100" /> APROBADO
                                     </span>
                                 ) : currentSchedule?.approvalStatus === 'pending' ? (
-                                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200 animate-pulse">
-                                        <Clock size={14} className="fill-amber-500 text-amber-100" /> En Supervisión
+                                    <span className="flex items-center gap-2 px-5 py-2 rounded-full bg-amber-50 text-amber-600 text-sm font-black border border-amber-200 shadow-sm animate-pulse">
+                                        <Clock size={18} className="fill-amber-500 text-amber-100" /> EN SUPERVISIÓN
                                     </span>
                                 ) : currentSchedule?.approvalStatus === 'rejected' ? (
-                                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold border border-red-200">
-                                        <X size={14} className="fill-red-500 text-red-100" /> Rechazado
+                                    <span className="flex items-center gap-2 px-5 py-2 rounded-full bg-red-50 text-red-600 text-sm font-black border border-red-200 shadow-sm">
+                                        <X size={18} className="fill-red-500 text-red-100" /> RECHAZADO
                                     </span>
                                 ) : (
-                                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-500 text-xs font-bold border border-slate-200">
-                                        <Radio size={14} /> Borrador
+                                    <span className="flex items-center gap-2 px-5 py-2 rounded-full bg-slate-100/80 text-slate-500 text-sm font-black border border-slate-200 shadow-sm">
+                                        <Radio size={18} /> BORRADOR
                                     </span>
                                 )}
                             </div>
@@ -988,7 +1077,7 @@ const Schedule = () => {
                                         <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
                                         <span className="relative flex items-center gap-2">
                                             {isGenerating ? <Loader2 className="animate-spin" size={20} /> : <Wand2 size={20} />}
-                                            Generar con IA
+                                            Generar horario
                                         </span>
                                     </button>
                                 )}
@@ -1019,10 +1108,23 @@ const Schedule = () => {
                                 )}
                             </>
                         ) : (
-                            <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-xl text-slate-500 font-medium">
-                                <Lock size={16} />
-                                {currentSchedule?.approvalStatus === 'approved' ? 'Horario Aprobado (Bloqueado)' : 'Esperando Aprobación'}
-                                {currentSchedule?.approvalStatus === 'approved' && user.role !== 'admin' && (
+                            <div className={clsx(
+                                "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold",
+                                currentSchedule?.modificationStatus === 'requested' ? "bg-orange-100 text-orange-600" : "bg-slate-100 text-slate-500"
+                            )}>
+                                {currentSchedule?.modificationStatus === 'requested' ? (
+                                    <>
+                                        <Clock size={16} className="animate-pulse" />
+                                        Solicitud de Cambio Pendiente...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Lock size={16} />
+                                        {currentSchedule?.approvalStatus === 'approved' ? 'Horario Aprobado (Bloqueado)' : 'Esperando Aprobación'}
+                                    </>
+                                )}
+
+                                {currentSchedule?.approvalStatus === 'approved' && currentSchedule?.modificationStatus !== 'requested' && user.role !== 'admin' && (
                                     <button
                                         onClick={() => setIsModificationModalOpen(true)}
                                         className="ml-4 px-4 py-2 bg-gradient-to-r from-red-500 to-pink-600 text-white text-xs font-bold rounded-xl shadow-lg shadow-red-500/30 hover:shadow-red-500/40 hover:-translate-y-0.5 active:scale-95 transition-all flex items-center gap-2"
@@ -1085,23 +1187,60 @@ const Schedule = () => {
                         <h3 className="font-bold text-sm uppercase">Bajas Activas</h3>
                     </div>
                     <div className="flex-1 overflow-y-auto max-h-[150px] space-y-2">
-                        {weekDates.flatMap(date => currentSchedule?.shifts.filter(s => s.date === date && s.type === 'sick_leave') || []).reduce((unique: any[], s) => {
-                            if (!unique.find(i => i.employeeId === s.employeeId)) unique.push(s);
-                            return unique;
-                        }, []).map((s: any) => {
-                            const emp = employees.find(e => e.id === s.employeeId);
+                        {weekTimeOffRequests.filter(r => r.type === 'sick_leave' || r.type === 'maternity_paternity').map(req => {
+                            const emp = employees.find(e => e.id === req.employeeId);
+                            // Determine dates for this week or just use the whole request?
+                            // The modal expects specific dates to toggle. If it's a long range, we might just open the modal with the employee selected.
+                            // But usually, updating a long range involves deleting and recreating or using a different modal. 
+                            // For now, let's keep it simple: Select employee. 
+                            // If we want to show dates, we should filter req.dates (if explicit) or range intersection.
                             return (
-                                <div key={s.id} className="flex justify-between items-center bg-rose-50 p-2 rounded-lg text-xs">
-                                    <span className="font-bold text-rose-900 uppercase">{emp?.initials || emp?.name.substring(0, 2)}</span>
-                                    <button onClick={() => {
-                                        setSelectedEmployeeForSickLeave(s.employeeId);
-                                        setSelectedSickLeaveDates([s.date]);
-                                        setIsSickLeaveModalOpen(true);
-                                    }} className="text-rose-400 hover:text-rose-600"><Settings size={14} /></button>
+                                <div key={req.id} className="flex justify-between items-center bg-rose-50 p-2 rounded-lg text-xs">
+                                    <div className="flex flex-col">
+                                        <span className="font-bold text-rose-900 uppercase">{emp?.initials || emp?.name?.substring(0, 2)}</span>
+                                        <span className="text-[10px] text-rose-600 font-medium leading-none mt-0.5">
+                                            {req.startDate ? (
+                                                <>
+                                                    {new Date(req.startDate).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}
+                                                    {' - '}
+                                                    {req.endDate ? new Date(req.endDate).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : '...'}
+                                                </>
+                                            ) : (
+                                                req.dates && req.dates.length > 0 ? (
+                                                    <>
+                                                        {new Date(req.dates[0]).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}
+                                                        {req.dates.length > 1 && ` - ${new Date(req.dates[req.dates.length - 1]).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}`}
+                                                    </>
+                                                ) : null
+                                            )}
+                                        </span>
+                                    </div>
+                                    {!isLocked && (
+                                        <button onClick={() => {
+                                            // Pre-select employee for a new entry or editing?
+                                            // The previous logic was extracting a single shift date. 
+                                            // If we want to EDIT the existing request, we need a way to pass that.
+                                            // But the SickLeaveModal seems to just "Registrar" (Add/Overwrite).
+                                            setSelectedEmployeeForSickLeave(req.employeeId);
+                                            // If it has explicit dates, use them. If it's a range, maybe expand it? 
+                                            // For safety, let's just select the employee so the user can modify things.
+                                            // Or better, populate with relevant dates from this week.
+
+                                            // Logic to find relevant dates for this week from the request:
+                                            let datesToSelect: string[] = [];
+                                            if (req.dates && req.dates.length > 0) {
+                                                datesToSelect = req.dates.filter(d => weekDates.includes(d));
+                                            } else if (req.startDate && req.endDate) {
+                                                datesToSelect = weekDates.filter(d => d >= req.startDate! && d <= req.endDate!);
+                                            }
+                                            setSelectedSickLeaveDates(datesToSelect);
+                                            setIsSickLeaveModalOpen(true);
+                                        }} className="text-rose-400 hover:text-rose-600"><Settings size={14} /></button>
+                                    )}
                                 </div>
                             );
                         })}
-                        {(!currentSchedule || !currentSchedule.shifts.some(s => s.type === 'sick_leave')) && (
+                        {weekTimeOffRequests.filter(r => r.type === 'sick_leave' || r.type === 'maternity_paternity').length === 0 && (
                             <div className="text-xs text-slate-400 italic text-center py-2">- Ninguna -</div>
                         )}
                     </div>
@@ -1153,7 +1292,7 @@ const Schedule = () => {
                         <h3 className="font-bold text-sm uppercase">Peticiones</h3>
                     </div>
                     <div className="flex-1 overflow-y-auto max-h-[150px] space-y-2">
-                        {weekTimeOffRequests.filter(r => r.type !== 'vacation' && r.type !== 'sick_leave').map(req => {
+                        {weekTimeOffRequests.filter(r => r.type !== 'vacation' && r.type !== 'sick_leave' && r.type !== 'maternity_paternity').map(req => {
                             const emp = employees.find(e => e.id === req.employeeId);
                             return (
                                 <div key={req.id} className="flex justify-between items-center bg-blue-50 p-2 rounded-lg text-xs">
@@ -1177,7 +1316,7 @@ const Schedule = () => {
                                 </div>
                             );
                         })}
-                        {weekTimeOffRequests.filter(r => r.type !== 'vacation' && r.type !== 'sick_leave').length === 0 && (
+                        {weekTimeOffRequests.filter(r => r.type !== 'vacation' && r.type !== 'sick_leave' && r.type !== 'maternity_paternity').length === 0 && (
                             <div className="text-xs text-slate-400 italic text-center py-2">- Ninguna -</div>
                         )}
                     </div>
@@ -1290,22 +1429,28 @@ const Schedule = () => {
                             return (
                                 <div key={date} className={clsx(
                                     "p-3 text-center border-l border-slate-200/50 flex flex-col items-center justify-center relative group transition-colors",
-                                    isToday ? "bg-indigo-50/30" : "hover:bg-slate-50"
+                                    isToday ? "bg-indigo-50/40 shadow-inner" : "hover:bg-slate-50"
                                 )}>
-                                    {isToday && <div className="absolute top-0 inset-x-0 h-0.5 bg-indigo-500"></div>}
-                                    <span className={clsx(
-                                        "text-[10px] font-bold uppercase tracking-wider mb-0.5",
-                                        isToday ? "text-indigo-600" : isHoliday ? "text-red-500" : "text-slate-400"
+                                    {isToday && <div className="absolute top-0 inset-x-0 h-1 bg-indigo-500 rounded-b-sm shadow-sm shadow-indigo-200"></div>}
+
+                                    {/* Day Name Badge */}
+                                    <div className={clsx(
+                                        "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest mb-1 shadow-sm border",
+                                        isToday ? "bg-indigo-100 text-indigo-700 border-indigo-200" :
+                                            isHoliday ? "bg-red-100 text-red-700 border-red-200" :
+                                                "bg-white text-slate-500 border-slate-200"
                                     )}>
-                                        {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][new Date(date).getDay()]}
-                                    </span>
+                                        {['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'][new Date(date).getDay()]}
+                                    </div>
+
+                                    {/* Date Number */}
                                     <span className={clsx(
-                                        "text-lg font-black leading-none",
-                                        isToday ? "text-indigo-900" : isHoliday ? "text-red-600" : "text-slate-700"
+                                        "text-2xl font-black leading-none filter drop-shadow-sm",
+                                        isToday ? "text-indigo-900" : isHoliday ? "text-red-900" : "text-slate-700"
                                     )}>
                                         {new Date(date).getDate()}
                                     </span>
-                                    {isHoliday && <BadgeAlert size={12} className="text-red-400 absolute top-2 right-2" />}
+                                    {isHoliday && <BadgeAlert size={14} className="text-red-500 absolute top-2 right-2 animate-pulse" />}
                                 </div>
                             );
                         })
@@ -1364,7 +1509,7 @@ const Schedule = () => {
 
                 {/* EMPLOYEES ROWS */}
                 <div className="divide-y divide-slate-100 bg-white">
-                    {storeEmployees.map(emp => {
+                    {storeEmployees.map((emp, index) => {
                         // Calc Weekly Stats
                         const employeeShifts = currentSchedule?.shifts.filter(s => s.employeeId === emp.id) || [];
                         const workedHours = employeeShifts.reduce((acc, s) => {
@@ -1534,6 +1679,7 @@ const Schedule = () => {
                                             case 'split': cellStyle = "bg-purple-50 border-2 border-purple-300"; break;
                                             case 'vacation': cellStyle = "bg-teal-50 border-2 border-teal-300 opacity-90 striped-bg"; break;
                                             case 'sick_leave': cellStyle = "bg-rose-50 border-2 border-rose-300"; break;
+                                            case 'maternity_paternity': cellStyle = "bg-rose-50 border-2 border-rose-300"; break;
                                             case 'off': cellStyle = "bg-slate-100/50 border-2 border-slate-300"; break;
                                             case 'holiday': cellStyle = "bg-red-50/50 border-2 border-red-300"; break;
                                             default: cellStyle = "bg-gray-50 border-2 border-gray-300";
@@ -1563,16 +1709,53 @@ const Schedule = () => {
                                                                         shift.type === 'afternoon' ? "bg-orange-500 text-white border-orange-400" :
                                                                             shift.type === 'split' ? "bg-purple-500 text-white border-purple-400" :
                                                                                 shift.type === 'off' ? "bg-slate-200 text-slate-500 border-slate-300" :
-                                                                                    "bg-white text-slate-400 border-slate-200"
+                                                                                    (shift.type === 'sick_leave' || shift.type === 'maternity_paternity') ? "bg-rose-500 text-white border-rose-400" :
+                                                                                        "bg-white text-slate-400 border-slate-200"
                                                                 )}
                                                             >
-                                                                {shift.type === 'morning' ? 'M' : shift.type === 'afternoon' ? 'T' : shift.type === 'split' ? 'P' : 'L'}
+                                                                {shift.type === 'morning' ? 'M' :
+                                                                    shift.type === 'afternoon' ? 'T' :
+                                                                        shift.type === 'split' ? 'P' :
+                                                                            (shift.type === 'sick_leave' || shift.type === 'maternity_paternity') ? 'B' : 'L'}
                                                                 <ChevronRight size={8} className="rotate-90 opacity-50" />
                                                             </button>
                                                             {isTypeDropdownOpen && (
-                                                                <div className="absolute top-full left-0 mt-1 w-28 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden z-[100] animate-in fade-in zoom-in-95 duration-100">
+                                                                <div className={clsx(
+                                                                    "absolute left-0 w-28 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden z-[100] animate-in fade-in zoom-in-95 duration-100",
+                                                                    index >= storeEmployees.length - 2 ? "bottom-full mb-1 origin-bottom-left" : "top-full mt-1 origin-top-left"
+                                                                )}>
                                                                     {['morning', 'afternoon', 'split', 'off'].map(t => (
-                                                                        <button key={t} onClick={() => { updateShift(currentSchedule!.id, shift.id, { type: t as ShiftType }); setActiveDropdown(null); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-slate-50 flex items-center gap-2">
+                                                                        <button key={t} onClick={() => {
+                                                                            const currentSettings = settings.find(s => s.establishmentId === user.establishmentId) || getSettings(user.establishmentId);
+                                                                            const updates: any = { type: t as ShiftType };
+
+                                                                            if (t === 'morning') {
+                                                                                updates.startTime = currentSettings.openingHours.morningStart;
+                                                                                updates.endTime = currentSettings.openingHours.morningEnd;
+                                                                                // Reset split times if previously set
+                                                                                updates.morningEndTime = undefined;
+                                                                                updates.afternoonStartTime = undefined;
+                                                                            } else if (t === 'afternoon') {
+                                                                                updates.startTime = currentSettings.openingHours.afternoonStart;
+                                                                                updates.endTime = currentSettings.openingHours.afternoonEnd;
+                                                                                // Reset split times if previously set
+                                                                                updates.morningEndTime = undefined;
+                                                                                updates.afternoonStartTime = undefined;
+                                                                            } else if (t === 'split') {
+                                                                                updates.startTime = currentSettings.openingHours.morningStart;
+                                                                                updates.morningEndTime = currentSettings.openingHours.morningEnd;
+                                                                                updates.afternoonStartTime = currentSettings.openingHours.afternoonStart;
+                                                                                updates.endTime = currentSettings.openingHours.afternoonEnd;
+                                                                            } else if (t === 'off') {
+                                                                                updates.startTime = undefined;
+                                                                                updates.endTime = undefined;
+                                                                                updates.morningEndTime = undefined;
+                                                                                updates.afternoonStartTime = undefined;
+                                                                            }
+
+                                                                            updateShift(currentSchedule!.id, shift.id, updates);
+                                                                            setActiveDropdown(null);
+                                                                        }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-slate-50 flex items-center gap-2">
                                                                             <div className={clsx("w-2 h-2 rounded-full", t === 'morning' ? "bg-indigo-500" : t === 'afternoon' ? "bg-orange-500" : t === 'split' ? "bg-purple-500" : "bg-slate-400")} />
                                                                             {t === 'morning' ? 'Mañana' : t === 'afternoon' ? 'Tarde' : t === 'split' ? 'Partido' : 'Libre'}
                                                                         </button>
@@ -1619,7 +1802,10 @@ const Schedule = () => {
                                                                     <ChevronRight size={10} className="rotate-90 opacity-40 shrink-0" />
                                                                 </button>
                                                                 {isRoleDropdownOpen && (
-                                                                    <div className="absolute top-full right-0 mt-1 w-32 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden z-[100] animate-in fade-in zoom-in-95 duration-100">
+                                                                    <div className={clsx(
+                                                                        "absolute right-0 w-32 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden z-[100] animate-in fade-in zoom-in-95 duration-100",
+                                                                        index >= storeEmployees.length - 2 ? "bottom-full mb-1 origin-bottom-right" : "top-full mt-1 origin-top-right"
+                                                                    )}>
                                                                         <button onClick={() => { updateShift(currentSchedule!.id, shift.id, { role: undefined }); setActiveDropdown(null); }} className="w-full text-left px-3 py-2 text-[10px] font-bold hover:bg-slate-50 text-slate-400 border-b border-slate-50">-- Sin Asignar --</button>
                                                                         {[
                                                                             { v: 'sales_register', l: 'Caja Ventas' },
@@ -1627,7 +1813,40 @@ const Schedule = () => {
                                                                             { v: 'shuttle', l: 'Lanzadera' },
                                                                             { v: 'cleaning', l: 'Limpieza' }
                                                                         ].map(opt => (
-                                                                            <button key={opt.v} onClick={() => { updateShift(currentSchedule!.id, shift.id, { role: opt.v as WorkRole }); setActiveDropdown(null); }} className="w-full text-left px-3 py-2 text-[10px] font-bold hover:bg-slate-50 text-slate-600">{opt.l}</button>
+                                                                            <button key={opt.v} onClick={() => {
+                                                                                // LOGIC: Update hours based on Role Config
+                                                                                const currentSettings = settings.find(s => s.establishmentId === user.establishmentId) || getSettings(user.establishmentId);
+                                                                                const roleConfig = currentSettings.roleSchedules?.[opt.v as WorkRole];
+                                                                                const updates: any = { role: opt.v as WorkRole };
+
+                                                                                if (roleConfig) {
+                                                                                    if (shift.type === 'morning') {
+                                                                                        if (roleConfig.type === 'morning') {
+                                                                                            if (roleConfig.startTime) updates.startTime = roleConfig.startTime;
+                                                                                            if (roleConfig.endTime) updates.endTime = roleConfig.endTime;
+                                                                                        } else if (roleConfig.type === 'split') {
+                                                                                            if (roleConfig.startTime) updates.startTime = roleConfig.startTime;
+                                                                                            if (roleConfig.morningEndTime) updates.endTime = roleConfig.morningEndTime;
+                                                                                        }
+                                                                                    } else if (shift.type === 'afternoon') {
+                                                                                        if (roleConfig.type === 'afternoon') {
+                                                                                            if (roleConfig.startTime) updates.startTime = roleConfig.startTime;
+                                                                                            if (roleConfig.endTime) updates.endTime = roleConfig.endTime;
+                                                                                        } else if (roleConfig.type === 'split') {
+                                                                                            if (roleConfig.afternoonStartTime) updates.startTime = roleConfig.afternoonStartTime;
+                                                                                            if (roleConfig.endTime) updates.endTime = roleConfig.endTime;
+                                                                                        }
+                                                                                    } else if (shift.type === 'split' && roleConfig.type === 'split') {
+                                                                                        if (roleConfig.startTime) updates.startTime = roleConfig.startTime;
+                                                                                        if (roleConfig.morningEndTime) updates.morningEndTime = roleConfig.morningEndTime;
+                                                                                        if (roleConfig.afternoonStartTime) updates.afternoonStartTime = roleConfig.afternoonStartTime;
+                                                                                        if (roleConfig.endTime) updates.endTime = roleConfig.endTime;
+                                                                                    }
+                                                                                }
+
+                                                                                updateShift(currentSchedule!.id, shift.id, updates);
+                                                                                setActiveDropdown(null);
+                                                                            }} className="w-full text-left px-3 py-2 text-[10px] font-bold hover:bg-slate-50 text-slate-600">{opt.l}</button>
                                                                         ))}
                                                                     </div>
                                                                 )}
@@ -1641,16 +1860,16 @@ const Schedule = () => {
                                                             {shift.type === 'split' ? (
                                                                 <div className="grid grid-cols-2 gap-1.5">
                                                                     <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-1 overflow-hidden focus-within:ring-2 focus-within:ring-purple-100 focus-within:border-purple-300 transition-all">
-                                                                        <input type="time" value={shift.startTime || ''} onChange={(e) => updateShift(currentSchedule!.id, shift.id, { startTime: e.target.value })} className="w-full text-xs font-black text-center outline-none bg-transparent no-time-icon text-slate-700" />
+                                                                        <TimeInput value={shift.startTime || ''} onChange={(val) => updateShift(currentSchedule!.id, shift.id, { startTime: val })} className="w-full text-xs font-black text-center text-slate-700" />
                                                                     </div>
                                                                     <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-1 overflow-hidden focus-within:ring-2 focus-within:ring-purple-100 focus-within:border-purple-300 transition-all">
-                                                                        <input type="time" value={shift.morningEndTime || ''} onChange={(e) => updateShift(currentSchedule!.id, shift.id, { morningEndTime: e.target.value })} className="w-full text-xs font-black text-center outline-none bg-transparent no-time-icon text-slate-700" />
+                                                                        <TimeInput value={shift.morningEndTime || ''} onChange={(val) => updateShift(currentSchedule!.id, shift.id, { morningEndTime: val })} className="w-full text-xs font-black text-center text-slate-700" />
                                                                     </div>
                                                                     <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-1 overflow-hidden focus-within:ring-2 focus-within:ring-purple-100 focus-within:border-purple-300 transition-all">
-                                                                        <input type="time" value={shift.afternoonStartTime || ''} onChange={(e) => updateShift(currentSchedule!.id, shift.id, { afternoonStartTime: e.target.value })} className="w-full text-xs font-black text-center outline-none bg-transparent no-time-icon text-slate-700" />
+                                                                        <TimeInput value={shift.afternoonStartTime || ''} onChange={(val) => updateShift(currentSchedule!.id, shift.id, { afternoonStartTime: val })} className="w-full text-xs font-black text-center text-slate-700" />
                                                                     </div>
                                                                     <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-1 overflow-hidden focus-within:ring-2 focus-within:ring-purple-100 focus-within:border-purple-300 transition-all">
-                                                                        <input type="time" value={shift.endTime || ''} onChange={(e) => updateShift(currentSchedule!.id, shift.id, { endTime: e.target.value })} className="w-full text-xs font-black text-center outline-none bg-transparent no-time-icon text-slate-700" />
+                                                                        <TimeInput value={shift.endTime || ''} onChange={(val) => updateShift(currentSchedule!.id, shift.id, { endTime: val })} className="w-full text-xs font-black text-center text-slate-700" />
                                                                     </div>
                                                                 </div>
                                                             ) : shift.type !== 'off' && (
@@ -1660,18 +1879,16 @@ const Schedule = () => {
                                                                         shift.type === 'afternoon' ? "focus-within:ring-orange-200 focus-within:border-orange-300" :
                                                                             "focus-within:ring-slate-200"
                                                                 )}>
-                                                                    <input
-                                                                        type="time"
+                                                                    <TimeInput
                                                                         value={shift.startTime || ''}
-                                                                        onChange={(e) => updateShift(currentSchedule!.id, shift.id, { startTime: e.target.value })}
-                                                                        className="flex-1 text-sm font-black text-center outline-none bg-transparent text-slate-700 no-time-icon p-1"
+                                                                        onChange={(val) => updateShift(currentSchedule!.id, shift.id, { startTime: val })}
+                                                                        className="flex-1 text-sm font-black text-center text-slate-700"
                                                                     />
                                                                     <span className="text-slate-300 font-bold">-</span>
-                                                                    <input
-                                                                        type="time"
+                                                                    <TimeInput
                                                                         value={shift.endTime || ''}
-                                                                        onChange={(e) => updateShift(currentSchedule!.id, shift.id, { endTime: e.target.value })}
-                                                                        className="flex-1 text-sm font-black text-center outline-none bg-transparent text-slate-700 no-time-icon p-1"
+                                                                        onChange={(val) => updateShift(currentSchedule!.id, shift.id, { endTime: val })}
+                                                                        className="flex-1 text-sm font-black text-center text-slate-700"
                                                                     />
                                                                 </div>
                                                             )}
@@ -1715,7 +1932,17 @@ const Schedule = () => {
                                                                     <button disabled={!isEditable} onClick={() => updateShift(currentSchedule!.id, shift.id, { isClosing: !shift.isClosing })} className={clsx("flex-1 rounded-lg text-[9px] font-black border flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed", shift.isClosing ? "bg-amber-100 border-amber-300 text-amber-700 shadow-sm" : "bg-white border-slate-200 text-slate-300 hover:text-slate-400 hover:border-slate-300")}>C</button>
                                                                 </>
                                                             )}
-                                                            <button disabled={!isEditable} onClick={() => updateShift(currentSchedule!.id, shift.id, { isIndividualMeeting: !shift.isIndividualMeeting })} className={clsx("flex-1 rounded-lg text-[9px] font-black border flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed", shift.isIndividualMeeting ? "bg-indigo-100 border-indigo-300 text-indigo-700 shadow-sm" : "bg-white border-slate-200 text-slate-300 hover:text-slate-400 hover:border-slate-300")}>RI</button>
+                                                            <button disabled={!isEditable} onClick={() => {
+                                                                const shouldActivate = !shift.isIndividualMeeting;
+                                                                const updates: any = { isIndividualMeeting: shouldActivate };
+                                                                if (shouldActivate) {
+                                                                    const currentSettings = settings.find(s => s.establishmentId === user.establishmentId) || getSettings(user.establishmentId);
+                                                                    if (currentSettings.individualMeetingStartTime) {
+                                                                        updates.startTime = currentSettings.individualMeetingStartTime;
+                                                                    }
+                                                                }
+                                                                updateShift(currentSchedule!.id, shift.id, updates);
+                                                            }} className={clsx("flex-1 rounded-lg text-[9px] font-black border flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed", shift.isIndividualMeeting ? "bg-indigo-100 border-indigo-300 text-indigo-700 shadow-sm" : "bg-white border-slate-200 text-slate-300 hover:text-slate-400 hover:border-slate-300")}>RI</button>
                                                         </div>
                                                     )}
                                                 </div>
@@ -2129,6 +2356,41 @@ const Schedule = () => {
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Active Sick Leaves List */}
+                            {selectedEmployeeForSickLeave && (
+                                <div className="mt-6 border-t border-slate-100 pt-4">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Bajas Activas</h4>
+                                    <div className="space-y-2">
+                                        {timeOffRequests
+                                            .filter(req => req.employeeId === selectedEmployeeForSickLeave && req.type === 'sick_leave')
+                                            .map(req => (
+                                                <div key={req.id} className="flex justify-between items-center bg-rose-50 p-3 rounded-xl border border-rose-100">
+                                                    <div>
+                                                        <div className="text-xs font-bold text-rose-800 uppercase tracking-wider">Baja Médica</div>
+                                                        <div className="text-xs font-medium text-rose-600 mt-0.5">
+                                                            {req.startDate && req.endDate
+                                                                ? `${new Date(req.startDate).toLocaleDateString()} - ${new Date(req.endDate).toLocaleDateString()}`
+                                                                : req.dates.map(d => new Date(d).getDate()).join(', ')}
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => removeTimeOff(req.id)}
+                                                        className="p-2 text-rose-400 hover:bg-rose-100 hover:text-rose-600 rounded-lg transition-colors"
+                                                        title="Eliminar baja"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        {timeOffRequests.filter(req => req.employeeId === selectedEmployeeForSickLeave && req.type === 'sick_leave').length === 0 && (
+                                            <div className="text-center py-4 text-xs text-slate-400 italic bg-slate-50 rounded-xl border border-slate-100">
+                                                No hay bajas activas registradas
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                             <div className="mt-8 flex justify-end gap-3">
                                 <button onClick={() => setIsSickLeaveModalOpen(false)} className="px-5 py-2.5 text-slate-500 font-bold hover:bg-slate-50 rounded-xl">Cancelar</button>
                                 <button

@@ -1,17 +1,86 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+
 import { useNavigate } from 'react-router-dom';
 import { LogoBossDirecting } from '../components/BrandLogo';
+import { clsx } from 'clsx';
+import { Lock, X, ChevronRight, Loader2 } from 'lucide-react';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../firebase';
 
 const LoginPage: React.FC = () => {
-    const { login, isAuthenticated } = useAuth();
+    const { isAuthenticated } = useAuth();
     const navigate = useNavigate();
+
+    // State for Password Modal
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectedStore, setSelectedStore] = useState<{ id: string, name: string } | null>(null);
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
 
     useEffect(() => {
         if (isAuthenticated) {
             navigate('/');
         }
     }, [isAuthenticated, navigate]);
+
+    const handleStoreClick = (store: { id: string, name: string }) => {
+        setSelectedStore(store);
+        setIsModalOpen(true);
+        setPassword('');
+        setError('');
+    };
+
+    // Auth State
+    const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+    const getEmailForStore = (storeId: string) => {
+        if (storeId === '1') return 'tienda1@bemanager.com';
+        if (storeId === '2') return 'tienda2@bemanager.com';
+        if (storeId === 'super') return 'admin@bemanager.com';
+        // Fallback for others (3, 4, 5, 6, 7)
+        return `tienda${storeId}@bemanager.com`;
+    };
+
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedStore) return;
+
+        setIsAuthenticating(true);
+        setError('');
+
+        const email = getEmailForStore(selectedStore.id);
+
+        try {
+            await signInWithEmailAndPassword(auth, email, password);
+            navigate('/');
+        } catch (err: any) {
+            console.error("Login Error:", err);
+
+            // Auto-Seeding: If user not found, create it (ONLY FOR MIGRATION PHASE)
+            if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+                try {
+                    // Check if it's invalid creds (exists but wrong pass) vs not found.
+                    // 'auth/invalid-credential' is returned for both in newer SDKs for security? 
+                    // Let's try to create, if it exists it will fail with email-already-in-use.
+
+                    await createUserWithEmailAndPassword(auth, email, password);
+                    // If successful, we are logged in
+                    navigate('/');
+                } catch (createErr: any) {
+                    if (createErr.code === 'auth/email-already-in-use') {
+                        setError('Contraseña incorrecta');
+                    } else {
+                        setError('Error al iniciar sesión: ' + createErr.message);
+                    }
+                }
+            } else {
+                setError('Error: ' + err.message);
+            }
+        } finally {
+            setIsAuthenticating(false);
+        }
+    };
 
     // BeManager Logo Component (Large Version)
     const LogoLarge = () => (
@@ -35,7 +104,7 @@ const LoginPage: React.FC = () => {
             </div>
 
             {/* Main Glass Container */}
-            <div className="relative z-10 w-full max-w-5xl mx-4">
+            <div className={clsx("relative z-10 w-full max-w-5xl mx-4 transition-all duration-500", isModalOpen ? "blur-sm scale-95 opacity-50 pointer-events-none" : "")}>
                 <div className="backdrop-blur-2xl bg-white/70 border border-white/60 rounded-[3rem] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] p-8 md:p-16 overflow-hidden">
 
                     {/* Decorative Top Line */}
@@ -95,7 +164,7 @@ const LoginPage: React.FC = () => {
                         ].map((store) => (
                             <button
                                 key={store.id}
-                                onClick={() => login(store.id)}
+                                onClick={() => handleStoreClick({ id: store.id, name: store.name })}
                                 className={`
                                     group relative w-full md:w-64 p-1 rounded-[2.5rem] transition-all duration-300
                                     hover:-translate-y-2
@@ -148,6 +217,69 @@ const LoginPage: React.FC = () => {
 
                 </div>
             </div>
+
+            {/* Password Modal */}
+            {isModalOpen && selectedStore && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0" onClick={() => setIsModalOpen(false)}></div>
+                    <form
+                        onSubmit={handleLogin}
+                        className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl p-8 border border-slate-100 animate-in fade-in zoom-in-95 duration-200"
+                    >
+                        <button
+                            type="button"
+                            onClick={() => setIsModalOpen(false)}
+                            className="absolute top-6 right-6 p-2 rounded-full bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+                        >
+                            <X size={20} />
+                        </button>
+
+                        <div className="mb-8 text-center">
+                            <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 mx-auto mb-4 shadow-sm">
+                                <Lock size={28} />
+                            </div>
+                            <h3 className="text-2xl font-black text-slate-900 mb-1">Acceso Seguro</h3>
+                            <p className="text-slate-500 font-medium text-sm">Introduce la contraseña para <strong className="text-indigo-600">{selectedStore.name}</strong></p>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="space-y-2">
+                                <input
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => {
+                                        setPassword(e.target.value);
+                                        setError('');
+                                    }}
+                                    className={clsx(
+                                        "w-full px-6 py-4 bg-slate-50 border rounded-2xl outline-none font-bold text-lg text-center tracking-widest transition-all",
+                                        "placeholder:text-slate-300 placeholder:font-normal placeholder:tracking-normal",
+                                        error
+                                            ? "border-rose-200 text-rose-600 focus:ring-4 focus:ring-rose-500/10"
+                                            : "border-slate-100 text-slate-800 focus:ring-4 focus:ring-indigo-500/10 focus:bg-white"
+                                    )}
+                                    placeholder="••••••••"
+                                    autoFocus
+                                />
+                                {error && (
+                                    <p className="text-center text-xs font-bold text-rose-500 animate-in slide-in-from-top-1">
+                                        {error}
+                                    </p>
+                                )}
+                            </div>
+
+                            <button
+                                type="submit"
+                                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-lg hover:bg-black transition-all shadow-lg shadow-indigo-500/20 active:scale-95 flex items-center justify-center gap-2 group disabled:opacity-50 disabled:pointer-events-none"
+                                disabled={isAuthenticating}
+                            >
+                                <span>Entrar</span>
+                                {isAuthenticating ? <Loader2 size={18} className="animate-spin" /> : <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
 
             <style>{`
                 @keyframes blob {

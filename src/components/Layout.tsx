@@ -5,14 +5,16 @@ import { useStore } from '../context/StoreContext';
 import { Users, Calendar, BarChart3, LogOut, Menu, Settings, CheckCircle, Radio, CheckSquare, Coins } from 'lucide-react';
 import { LogoBossDirecting } from './BrandLogo';
 import clsx from 'clsx';
+import { useNotifications } from '../hooks/useNotifications';
 
 const Layout = () => {
     const { user, logout } = useAuth();
-    const { getSettings, tasks, timeOffRequests, schedules, incentiveReports, getManagerNames } = useStore();
+    const { getSettings, tasks, timeOffRequests, schedules, incentiveReports, getManagerNames, isLoaded, settings: allStoreSettings } = useStore();
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const location = useLocation();
 
-
+    // Enable Global Notifications
+    useNotifications();
 
     // Check for urgent tasks (Priority based or Overdue)
     const hasUrgentTasks = tasks.some(t => {
@@ -20,32 +22,69 @@ const Layout = () => {
         if (t.isArchived) return false;
 
         if (user.role === 'admin') {
-            // Supervisor: alert for critical/overdue tasks globally
-            const isCritical = t.priority === 'critical' || t.priority === 'high';
-            const isOverdue = t.date && (new Date(t.date) <= new Date());
+            // New Logic: Illuminate ONLY if the task is finished (completed by all targets) so it can be archived.
 
-            if (!isCritical && !isOverdue) return false;
+            // 1. Identify Target Store IDs
+            const allStoreIds = allStoreSettings.map(s => s.establishmentId);
+            const targets = t.targetStores === 'all' ? allStoreIds : t.targetStores;
 
-            // Check if any assigned store is not completed
-            if (t.targetStores === 'all') return true;
-            return t.targetStores.some(sid => t.status[sid]?.status !== 'completed');
+            // 2. Check if ALL targets have 'completed' status
+            // If a store hasn't touched the task, t.status[sid] is undefined -> not completed
+            const isFullyCompleted = targets.every(sid => t.status[sid]?.status === 'completed');
+
+            return isFullyCompleted;
         } else {
-            // Manager: alert for critical/overdue tasks assigned to their store
+            // Manager: alert ONLY for tasks that are:
+            // 1. Assigned to their store
+            // 2. "Active" (Date is today or past, OR no date) -> Future KEY hidden
+            // 3. Status is 'pending' (Not started yet)
+
             const isAssigned = t.targetStores === 'all' || (user.establishmentId && t.targetStores.includes(user.establishmentId));
             if (!isAssigned) return false;
 
             const myStatus = t.status[user.establishmentId]?.status || 'pending';
-            if (myStatus === 'completed') return false;
 
-            if (t.priority === 'critical' || t.priority === 'high') return true;
+            // If already started or completed, don't notify
+            if (myStatus !== 'pending') return false;
 
+            // Check Date (Hide Future Tasks)
             if (t.date) {
                 const now = new Date();
                 const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 const dueDate = new Date(t.date);
                 const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-                return dueDay <= today; // Today or overdue
+
+                // If it's in the future, don't notify yet
+                if (dueDay > today) return false;
             }
+
+            // Check Cyclical Tasks (Hide if not active window)
+            if (t.isCyclical) {
+                const now = new Date(); // Use local now for consistency
+
+                if (t.cycleUnit === 'months') {
+                    const currentDay = now.getDate();
+                    const startDay = t.cyclicalDayOfMonth || 1;
+                    const duration = t.durationDays || 1;
+                    // Show only if within the active window [startDay, startDay + duration)
+                    if (currentDay < startDay || currentDay >= startDay + duration) return false;
+                }
+
+                if (t.cycleUnit === 'weeks') {
+                    const currentDayOfWeek = now.getDay(); // 0-6
+                    const startDayOfWeek = t.cyclicalDayOfWeek || 0; // 0-6
+                    const duration = t.durationDays || 1;
+
+                    // Calculate days passed since start of cycle
+                    const diff = (currentDayOfWeek - startDayOfWeek + 7) % 7;
+
+                    // Show only if we are within 'duration' days
+                    if (diff >= duration) return false;
+                }
+            }
+
+            // If we are here, it's assigned, pending, and current/past. Notify!
+            return true;
         }
         return false;
     });
@@ -55,10 +94,16 @@ const Layout = () => {
         timeOffRequests.some(r => r.status === 'pending') ||
         schedules.some(s => s.approvalStatus === 'pending' || s.modificationStatus === 'requested');
 
-    // Check for Pending Incentives (Manager)
+    // Check for Pending Incentives (Manager & Supervisor)
     const hasPendingIncentives = (() => {
-        if (!user || user.role === 'admin') return false;
+        if (!user) return false;
 
+        if (user.role === 'admin') {
+            // Supervisor Logic: Check if ANY report is pending approval or modification requested
+            return incentiveReports.some(r => r.status === 'pending_approval' || r.status === 'modification_requested');
+        }
+
+        // Manager Logic
         // 1. Check for changes requested
         const hasChanges = incentiveReports.some(r => r.establishmentId === user.establishmentId && r.status === 'changes_requested');
         if (hasChanges) return true;
@@ -90,6 +135,17 @@ const Layout = () => {
 
     if (!user) return null;
 
+    if (!isLoaded) {
+        return (
+            <div className="flex h-screen w-full items-center justify-center bg-[#F1F5F9]">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="h-12 w-12 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600"></div>
+                    <p className="font-bold text-slate-400 animate-pulse">Cargando Datos...</p>
+                </div>
+            </div>
+        );
+    }
+
     const settings = getSettings(user.establishmentId);
     const displayName = getManagerNames(user.establishmentId) || settings.managerName || user.name;
 
@@ -112,7 +168,7 @@ const Layout = () => {
         { to: '/live', label: 'En Vivo', icon: Radio },
         { to: '/approvals', label: 'Horarios', icon: CheckCircle, isUrgent: hasPendingApprovals },
         { to: '/tasks', label: 'Tareas', icon: CheckSquare, isUrgent: hasUrgentTasks },
-        { to: '/supervision/incentives', label: 'Incentivos', icon: Coins },
+        { to: '/supervision/incentives', label: 'Incentivos', icon: Coins, isUrgent: hasPendingIncentives },
     ];
 
     const navItems = isSupervisor ? supervisorNavItems : managerNavItems;
@@ -206,22 +262,20 @@ const Layout = () => {
                 </nav>
 
                 <div className={clsx("p-5 mt-auto border-t flex flex-col items-center gap-4", isDarkMode ? "border-slate-800" : "border-slate-100/50")}>
-                    {!isSupervisor && (
-                        <NavLink
-                            to="/settings"
-                            title={!sidebarOpen ? 'Configuración' : undefined}
-                            className={({ isActive }) => clsx(
-                                "relative flex items-center justify-center transition-all duration-300 group cursor-pointer",
-                                sidebarOpen ? "w-full px-5 py-3 rounded-2xl gap-3 justify-start" : "w-12 h-12 rounded-2xl",
-                                isActive
-                                    ? (isDarkMode ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30" : "bg-slate-100 text-indigo-600 border border-slate-200")
-                                    : (isDarkMode ? "text-slate-400 hover:text-indigo-300" : "text-slate-500 hover:text-indigo-600")
-                            )}
-                        >
-                            <Settings size={20} />
-                            {sidebarOpen && <span className="font-bold text-sm">Configuración</span>}
-                        </NavLink>
-                    )}
+                    <NavLink
+                        to={isSupervisor ? "/supervision/settings" : "/settings"}
+                        title={!sidebarOpen ? 'Configuración' : undefined}
+                        className={({ isActive }) => clsx(
+                            "relative flex items-center justify-center transition-all duration-300 group cursor-pointer",
+                            sidebarOpen ? "w-full px-5 py-3 rounded-2xl gap-3 justify-start" : "w-12 h-12 rounded-2xl",
+                            isActive
+                                ? (isDarkMode ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30" : "bg-slate-100 text-indigo-600 border border-slate-200")
+                                : (isDarkMode ? "text-slate-400 hover:text-indigo-300" : "text-slate-500 hover:text-indigo-600")
+                        )}
+                    >
+                        <Settings size={20} />
+                        {sidebarOpen && <span className="font-bold text-sm">Configuración</span>}
+                    </NavLink>
 
                     <button
                         onClick={logout}

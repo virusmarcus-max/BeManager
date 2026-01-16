@@ -3,6 +3,23 @@ import { getWeekDates } from './dateUtils';
 
 
 
+// Helper for randomization
+function shuffleArray<T>(array: T[]): T[] {
+    const randomValues = new Uint32Array(array.length);
+    if (typeof crypto !== 'undefined') {
+        crypto.getRandomValues(randomValues);
+    } else {
+        for (let i = 0; i < array.length; i++) randomValues[i] = Math.floor(Math.random() * 1000000);
+    }
+
+    for (let i = array.length - 1; i > 0; i--) {
+        // Use the proper modulo bias-free? MVP sufficient
+        const j = randomValues[i] % (i + 1);
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
 export const generateWeeklySchedule = (
     establishmentId: string,
     employees: Employee[],
@@ -12,10 +29,10 @@ export const generateWeeklySchedule = (
     settings?: StoreSettings,
     permanentRequests: PermanentRequest[] = []
 ): WeeklySchedule => {
+    console.log('[Scheduler] Generating Schedule for:', weekStartDate);
+    console.log('[Scheduler] Holidays Input:', JSON.stringify(holidays));
+    console.log('[Scheduler] Employees Count:', employees.length);
     const shifts: Shift[] = [];
-
-    // Helper to identify Key Roles
-    const isKeyRole = (category: string) => ['Gerente', 'Subgerente', 'Responsable'].includes(category);
 
     // 1. Prepare Dates (Mon-Sun)
     const weekDates: string[] = [];
@@ -27,26 +44,45 @@ export const generateWeeklySchedule = (
     }
 
     // 2. Initialize Coverage Map to track load
-    // date -> { morning: count, afternoon: count, keyStaff: count }
-    const coverage: Record<string, { morning: number, afternoon: number, keyStaff: number }> = {};
-    weekDates.forEach(d => coverage[d] = { morning: 0, afternoon: 0, keyStaff: 0 });
+    // date -> { morning: count, afternoon: count }
+    const coverage: Record<string, { morning: number, afternoon: number }> = {};
+    weekDates.forEach(d => coverage[d] = { morning: 0, afternoon: 0 });
 
     // Helper to get load
     const getLoad = (date: string, period: 'morning' | 'afternoon') => coverage[date]?.[period] || 0;
     const getTotalLoad = (date: string) => (coverage[date]?.morning || 0) + (coverage[date]?.afternoon || 0);
 
-    // Sort employees: 
-    // 1. Key Roles FIRST (Gerente > Subgerente > Responsable) to ensure they anchor the coverage
-    // 2. Then High hours
-    const rolePriority = { 'Gerente': 4, 'Subgerente': 3, 'Responsable': 2, 'Empleado': 1, 'Limpieza': 0 };
+    // 4. Sort Employees primarily by Weekly Hours
+    // Randomize initially to avoid bias in "First Come First Served" for equal hours
+    // Explicit Random Tie-Breaker Map
+    // Explicit Random Tie-Breaker Map - Regenerate every time to ensure randomness
+    const empTieBreaker = new Map<string, number>();
+    const empRandomValues = new Uint32Array(employees.length);
+    if (typeof crypto !== 'undefined') {
+        crypto.getRandomValues(empRandomValues);
+    } else {
+        // Fallback for non-crypto environments
+        for (let i = 0; i < employees.length; i++) empRandomValues[i] = Math.floor(Math.random() * 1000000);
+    }
+    employees.forEach((e, i) => empTieBreaker.set(e.id, empRandomValues[i]));
+    console.log('[Scheduler] Employee Tie-Breakers generated');
 
     const sortedEmployees = [...employees]
         .filter(emp => emp.active)
         .sort((a, b) => {
-            const pA = rolePriority[a.category as keyof typeof rolePriority] || 0;
-            const pB = rolePriority[b.category as keyof typeof rolePriority] || 0;
-            if (pA !== pB) return pB - pA; // Higher priority first
-            return b.weeklyHours - a.weeklyHours; // Then hours
+            // 1. Full Time (>= 40h) First
+            const fullTimeA = a.weeklyHours >= 40;
+            const fullTimeB = b.weeklyHours >= 40;
+            if (fullTimeA && !fullTimeB) return -1;
+            if (!fullTimeA && fullTimeB) return 1;
+
+            // 2. Descending Hours
+            if (a.weeklyHours !== b.weeklyHours) {
+                return b.weeklyHours - a.weeklyHours;
+            }
+
+            // 3. Explicit Random Tie-Break
+            return (empTieBreaker.get(b.id) || 0) - (empTieBreaker.get(a.id) || 0);
         });
 
     sortedEmployees.forEach(emp => {
@@ -54,10 +90,6 @@ export const generateWeeklySchedule = (
         let effectiveHours = emp.weeklyHours;
 
         // Check for Temporary Hours Adjustment covering this week
-        // We look for any overlap or if the week start is inside the range
-        // For simplicity, if the weekStartDate is inside a temp range, we use that.
-        // Or if the majority of the week is inside.
-        // Let's check if the weekStartDate is within a tempHours range.
         if (emp.tempHours && emp.tempHours.length > 0) {
             const activeTemp = emp.tempHours.find(t => {
                 return weekStartDate >= t.start && weekStartDate <= t.end;
@@ -67,11 +99,36 @@ export const generateWeeklySchedule = (
             }
         }
 
+        const normalizeDate = (d: any): string => {
+            if (!d) return '';
+            if (typeof d === 'string') return d.split('T')[0].trim();
+            // Handle Firestore Timestamp or Date object if slipped in
+            if (typeof d.toDate === 'function') return d.toDate().toISOString().split('T')[0];
+            if (d instanceof Date) return d.toISOString().split('T')[0];
+            return String(d);
+        };
+
         // Calculate target hours based on holidays AND vacations
         let numDaysToReduce = 0;
         weekDates.forEach(d => {
-            const h = holidays.find(h => (typeof h === 'string' ? h : h.date) === d);
+            const h = holidays.find(h => {
+                const hDate = typeof h === 'string' ? h : h.date;
+                return normalizeDate(hDate) === normalizeDate(d);
+            });
             const isFullHoliday = h && (typeof h === 'string' || h.type === 'full');
+
+            // Debug Holiday Check
+            if (isFullHoliday) {
+                console.log(`[Scheduler] Holiday DETECTED for ${emp.name} on ${d} (Holiday: ${JSON.stringify(h)})`);
+            } else {
+                if (holidays.length > 0) {
+                    const potential = holidays.find(h => (typeof h === 'string' ? h : h.date).includes(d.substring(5))); // Same month/day
+                    if (potential) {
+                        console.log(`[Scheduler] Potential Mismatch for ${d}? Found similar holiday: ${JSON.stringify(potential)}`);
+                    }
+                }
+            }
+
             const isPartialHoliday = h && typeof h !== 'string' && (h.type === 'afternoon' || h.type === 'closed_afternoon');
 
             const isAbsence = timeOffRequests.some(r =>
@@ -83,7 +140,6 @@ export const generateWeeklySchedule = (
             if (isFullHoliday || isAbsence) {
                 numDaysToReduce += 1;
             } else if (isPartialHoliday && effectiveHours === 40) {
-                // EXCEPTION: 40h employees get 0.5 reduction for partial holidays
                 numDaysToReduce += 0.5;
             }
         });
@@ -91,8 +147,6 @@ export const generateWeeklySchedule = (
         // Calculate target hours with holiday/vacation deduction based on table
         let targetHours = effectiveHours;
 
-        // Key: Contracted Hours
-        // Columns correspond to days to reduce: [0.5, 1, 1.5, 2, 3]
         const reductionTable: Record<number, number[]> = {
             40: [36, 32, 28, 24, 16],
             36: [33, 30, 27, 23, 18],
@@ -111,7 +165,6 @@ export const generateWeeklySchedule = (
                 else if (numDaysToReduce === 1.5) targetHours = tableRow[2];
                 else if (numDaysToReduce === 2) targetHours = tableRow[3];
                 else if (numDaysToReduce === 3) targetHours = tableRow[4];
-                // Fallback / combinations not in exact table columns
                 else if (numDaysToReduce >= 5) {
                     targetHours = 0;
                 }
@@ -119,7 +172,6 @@ export const generateWeeklySchedule = (
                     targetHours = Math.max(0, effectiveHours - Math.round((effectiveHours / 5) * numDaysToReduce));
                 }
             } else {
-                // Fallback for non-standard hours
                 targetHours = Math.max(0, effectiveHours - Math.round((effectiveHours / 5) * numDaysToReduce));
             }
         }
@@ -131,12 +183,14 @@ export const generateWeeklySchedule = (
         );
         const globalMorningOnly = userPermRequests.some(r => r.type === 'morning_only');
         const globalAfternoonOnly = userPermRequests.some(r => r.type === 'afternoon_only');
-        const hasEarlyMorningPerm = userPermRequests.some(r => r.type === 'early_morning_shift'); // Check for early morning
+        const hasEarlyMorningPerm = userPermRequests.some(r => r.type === 'early_morning_shift');
 
         const maxAfternoonsReq = userPermRequests.find(r => r.type === 'max_afternoons_per_week');
-        const maxAfternoons = maxAfternoonsReq ? (maxAfternoonsReq.value || 3) : 99; // Default high if no limit
+        const maxAfternoons = maxAfternoonsReq ? (maxAfternoonsReq.value || 3) : 99;
 
-        // Adjust slots for Early Morning Shift (consumes 1 extra hour for 4 days = 4 hours = 1 slot)
+        const hasNoSplit = userPermRequests.some(r => r.type === 'no_split');
+
+        // Adjust slots for Early Morning Shift
         let slotsNeeded = Math.round(targetHours / 4);
         if (hasEarlyMorningPerm && targetHours >= 20) {
             slotsNeeded -= 1;
@@ -153,10 +207,17 @@ export const generateWeeklySchedule = (
             const dateObj = new Date(date);
             const isSunday = dateObj.getDay() === 0;
             const isOpenSunday = settings?.openSundays?.includes(date);
-            const dayOfWeek = dateObj.getDay(); // 0 Sun, 1 Mon...
-            // Handle new object structure or legacy string
-            const holidayObj = holidays.find(h => (typeof h === 'string' ? h : h.date) === date);
+            const dayOfWeek = dateObj.getDay();
+
+            const holidayObj = holidays.find(h => {
+                const hDate = typeof h === 'string' ? h : h.date;
+                return normalizeDate(hDate) === normalizeDate(date);
+            });
             const isFullHoliday = holidayObj && (typeof holidayObj === 'string' || holidayObj.type === 'full');
+
+            if (emp.name === 'Juan') {
+                console.log(`[Scheduler Debug] ${emp.name} - ${date}: Holiday? ${!!holidayObj} type=${typeof holidayObj === 'string' ? holidayObj : holidayObj?.type} Full=${isFullHoliday}`);
+            }
 
             const timeOffReq = timeOffRequests.find(r =>
                 r.employeeId === emp.id &&
@@ -165,20 +226,29 @@ export const generateWeeklySchedule = (
 
             // Check permanent days off
             let permDayOff = userPermRequests.find(r => r.type === 'specific_days_off' && r.days?.includes(dayOfWeek));
+            const isPreAssignedOff = false;
 
             if (!permDayOff) {
                 const rotReq = userPermRequests.find(r => r.type === 'rotating_days_off' && r.cycleWeeks && r.referenceDate);
                 if (rotReq && rotReq.cycleWeeks && rotReq.referenceDate) {
                     const cycleStart = new Date(rotReq.referenceDate);
                     const currentWeek = new Date(weekStartDate);
-                    // Calculate difference in weeks. Careful with timezone but usually safe if both YYYY-MM-DD
                     const diffTime = currentWeek.getTime() - cycleStart.getTime();
                     const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
                     const diffWeeks = Math.floor(diffDays / 7);
 
                     if (diffWeeks >= 0) {
                         const cycleIndex = diffWeeks % rotReq.cycleWeeks.length;
-                        const daysOffThisWeek = rotReq.cycleWeeks[cycleIndex];
+                        // Support both legacy array-of-arrays and new object-array structure (for Firestore compatibility)
+                        const weekItem = rotReq.cycleWeeks[cycleIndex];
+                        let daysOffThisWeek: number[] = [];
+
+                        if (Array.isArray(weekItem)) {
+                            daysOffThisWeek = weekItem; // Legacy number[]
+                        } else if (weekItem && Array.isArray((weekItem as any).days)) {
+                            daysOffThisWeek = (weekItem as any).days; // New { days: number[] }
+                        }
+
                         if (daysOffThisWeek && daysOffThisWeek.includes(dayOfWeek)) {
                             permDayOff = rotReq;
                         }
@@ -196,7 +266,6 @@ export const generateWeeklySchedule = (
                     const diffWeeks = Math.floor(diffDays / 7);
 
                     if (diffWeeks >= 0) {
-                        // Rotation index: Mon(1) to Sat(6). 6 days cycle.
                         const startDay = fixedRotReq.value || 1;
                         const currentOffDay = 1 + ((startDay - 1 + diffWeeks) % 6);
                         if (dayOfWeek === currentOffDay) {
@@ -209,27 +278,109 @@ export const generateWeeklySchedule = (
             if (timeOffReq?.type === 'sick_leave') dayStatus[date] = 'sick_leave';
             else if (timeOffReq?.type === 'maternity_paternity') dayStatus[date] = 'maternity_paternity';
             else if (timeOffReq?.type === 'vacation') dayStatus[date] = 'vacation';
-            else if (isFullHoliday) dayStatus[date] = 'holiday';
+            else if (isFullHoliday) {
+                dayStatus[date] = 'holiday';
+                if (emp.name === 'Juan') console.log(`[Scheduler Debug] ${emp.name} - ${date}: Set as HOLIDAY`);
+            }
             else if (timeOffReq?.type === 'day_off') dayStatus[date] = 'off';
-            else if (permDayOff) dayStatus[date] = 'off'; // Permanent Day Off
+            else if ((timeOffReq?.type === 'morning_off' || timeOffReq?.type === 'afternoon_off') && effectiveHours >= 40) {
+                dayStatus[date] = 'off';
+            }
+            else if (permDayOff) dayStatus[date] = 'off';
+            else if (isPreAssignedOff) dayStatus[date] = 'off';
             else if (isSunday && !isOpenSunday) dayStatus[date] = 'off';
-            // Note: Afternoon holiday doesn't set dayStatus because we still work in the morning
-            else availableDays.push(date);
+            else {
+                availableDays.push(date);
+                if (emp.name === 'Juan') console.log(`[Scheduler Debug] ${emp.name} - ${date}: Added to Available`);
+            }
         });
+
+        // --- MANDATORY REST DAY RULE ---
+        const monToSatDates = weekDates.slice(0, 6);
+
+        const alreadyHasMonSatOff = monToSatDates.some(date => {
+            if (dayStatus[date] && dayStatus[date] !== 'morning' && dayStatus[date] !== 'afternoon' && dayStatus[date] !== 'split') return true;
+
+            const dObj = new Date(date + 'T12:00:00');
+            const dOfWeek = dObj.getDay();
+            const mRest = userPermRequests.find(r => r.type === 'morning_only');
+            const aRest = userPermRequests.find(r => r.type === 'afternoon_only');
+
+            const isMBlocked = mRest && mRest.days && mRest.days.length > 0 && !mRest.days.includes(dOfWeek);
+            const isABlocked = aRest && aRest.days && aRest.days.length > 0 && !aRest.days.includes(dOfWeek);
+
+            if (isMBlocked || isABlocked) return true;
+
+            return false;
+        });
+
+        if (!alreadyHasMonSatOff) {
+            const monSatAvailable = availableDays.filter(date => {
+                const dayIndex = new Date(date + 'T12:00:00').getDay();
+                return dayIndex >= 1 && dayIndex <= 6;
+            });
+
+            if (monSatAvailable.length > 0) {
+                const isLeader = ['Gerente', 'Subgerente', 'Responsable'].includes(emp.category);
+
+                const tieBreaker = new Map<string, number>();
+                const randomValues = new Uint32Array(monSatAvailable.length);
+                if (typeof crypto !== 'undefined') {
+                    crypto.getRandomValues(randomValues);
+                } else {
+                    for (let i = 0; i < randomValues.length; i++) randomValues[i] = Math.floor(Math.random() * 1000000);
+                }
+                monSatAvailable.forEach((d, i) => tieBreaker.set(d, randomValues[i]));
+
+                monSatAvailable.sort((a, b) => {
+                    let penaltyA = 0;
+                    let penaltyB = 0;
+
+                    if (isLeader) {
+                        const countLeadersOff = (date: string) => {
+                            return shifts.filter(s => {
+                                const sEmp = employees.find(e => e.id === s.employeeId);
+                                const isSLeader = sEmp && ['Gerente', 'Subgerente', 'Responsable'].includes(sEmp.category);
+                                return isSLeader && s.date === date && (s.type === 'off' || s.type === 'holiday' || s.type === 'vacation');
+                            }).length;
+                        };
+
+                        const leadersOffA = countLeadersOff(a);
+                        const leadersOffB = countLeadersOff(b);
+
+                        penaltyA += leadersOffA * 1000;
+                        penaltyB += leadersOffB * 1000;
+                    }
+
+                    const scoreA = getTotalLoad(a) - penaltyA;
+                    const scoreB = getTotalLoad(b) - penaltyB;
+
+                    if (scoreA !== scoreB) {
+                        return scoreB - scoreA;
+                    }
+
+                    const randA = tieBreaker.get(a) || 0;
+                    const randB = tieBreaker.get(b) || 0;
+                    return randB - randA;
+                });
+                const dayToForceOff = monSatAvailable[0];
+                console.log(`[Scheduler] Selected Off for ${emp.name}: ${dayToForceOff}`);
+                dayStatus[dayToForceOff] = 'off';
+
+                const availableIdx = availableDays.indexOf(dayToForceOff);
+                if (availableIdx > -1) {
+                    availableDays.splice(availableIdx, 1);
+                }
+            }
+        }
 
         const assignedShifts: Record<string, ShiftType> = {};
 
-        // Strategy Selection
         const hasForceFullDays = userPermRequests.some(r => r.type === 'force_full_days');
 
-        // Use High Hours Strategy (Split shifts priority) if hours >= 40 OR explicitly requested (e.g. 32h users wanting full days off)
-        const isHighHours = emp.weeklyHours >= 40 || hasForceFullDays;
+        const isHighHours = effectiveHours >= 40 || hasForceFullDays;
 
         if (isHighHours) {
-            // STRATEGY: Full Days (Split) to leave other days empty
-            // We need `slotsRemaining / 2` days.
-            // We should pick days that are currently LEAST loaded to balance the week.
-
             // Filter days that might have partial blocks (morning_off etc) - treat as unavailable for split logic for simplicity or handle gracefully
             // For MVP, we filter for fully available days
             const fullyAvailableDays = availableDays.filter(d => {
@@ -237,24 +388,52 @@ export const generateWeeklySchedule = (
                     r.employeeId === emp.id &&
                     (r.dates.includes(d) || (r.startDate && r.endDate && d >= r.startDate && d <= r.endDate))
                 );
+
+                // Explicitly check for Full Holiday to be absolutely sure
+                const hObj = holidays.find(h => {
+                    const hDate = typeof h === 'string' ? h : h.date;
+                    return normalizeDate(hDate) === normalizeDate(d);
+                });
+                const isFullHoliday = hObj && (typeof hObj === 'string' || hObj.type === 'full');
+                if (isFullHoliday) return false;
+
                 return !req || (req.type !== 'morning_off' && req.type !== 'afternoon_off');
             });
 
-            // Sort days by current Total Load (Ascending) -> Balance the week
-            // AND Priority for Key Staff: Fill Empty Coverage days first
-            const isKeyEmp = isKeyRole(emp.category);
+            // RANDOMIZATION: Shuffle first, then sort stability.
+            // To guarantee non-determinism, we generate a random score for each day for this specific employee iteration.
+            const noiseMap = new Map<string, number>();
+            const noiseValues = new Uint32Array(fullyAvailableDays.length);
+            if (typeof crypto !== 'undefined') crypto.getRandomValues(noiseValues);
+            else for (let i = 0; i < noiseValues.length; i++) noiseValues[i] = Math.floor(Math.random() * 1000000);
+
+            fullyAvailableDays.forEach((d, i) => noiseMap.set(d, noiseValues[i]));
 
             fullyAvailableDays.sort((a, b) => {
-                // 1. Key Coverage Priority
-                if (isKeyEmp) {
-                    const covA = coverage[a].keyStaff === 0 ? -1 : 0;
-                    const covB = coverage[b].keyStaff === 0 ? -1 : 0;
-                    if (covA !== covB) return covA - covB; // -1 comes first
+                // Total Load Balance STRICT
+                let loadA = getTotalLoad(a);
+                let loadB = getTotalLoad(b);
+
+                // PENALTY FOR SATURDAY (Only Sevilla 1)
+                // User wants fewer hours on Saturday for this store.
+                // We artificially increase the "load" of Saturday so it looks fuller, causing the scheduler to pick other days first.
+                if (establishmentId === '1') {
+                    const isSatA = new Date(a).getDay() === 6;
+                    const isSatB = new Date(b).getDay() === 6;
+                    if (isSatA) loadA += 2; // Artificial +2 shifts penalty
+                    if (isSatB) loadB += 2;
                 }
 
-                // 2. Total Load Balance
-                return getTotalLoad(a) - getTotalLoad(b);
+                if (loadA !== loadB) {
+                    return loadA - loadB; // Ascending: Pick emptiest day
+                }
+
+                // If loads are equal, use random noise
+                return (noiseMap.get(a) || 0) - (noiseMap.get(b) || 0);
             });
+
+            // DEBUG: Log the order for the first employee to verify randomness
+            console.log(`[Scheduler] Random Order for ${emp.name} (First 3):`, fullyAvailableDays.slice(0, 3));
 
             // Assign Split shifts
             for (const day of fullyAvailableDays) {
@@ -268,37 +447,25 @@ export const generateWeeklySchedule = (
                 const isMorningOnlyDay = morningRestriction && (!morningRestriction.days || morningRestriction.days.length === 0 || morningRestriction.days.includes(dayOfWeek));
                 const isAfternoonOnlyDay = afternoonRestriction && (!afternoonRestriction.days || afternoonRestriction.days.length === 0 || afternoonRestriction.days.includes(dayOfWeek));
 
+                // Strict Day Violation Check
+                const isMDayViolation = morningRestriction && morningRestriction.days && morningRestriction.days.length > 0 && !morningRestriction.days.includes(dayOfWeek);
+                const isADayViolation = afternoonRestriction && afternoonRestriction.days && afternoonRestriction.days.length > 0 && !afternoonRestriction.days.includes(dayOfWeek);
+
+                if (isMDayViolation || isADayViolation) continue;
+
                 // Get holiday info for this day again
-                const hObj = holidays.find(h => typeof h === 'string' ? h === day : h.date === day);
+                const hObj = holidays.find(h => {
+                    const hDate = typeof h === 'string' ? h : h.date;
+                    return normalizeDate(hDate) === normalizeDate(day);
+                });
                 const isAfternoonClosed = hObj && typeof hObj !== 'string' && (hObj.type === 'afternoon' || hObj.type === 'closed_afternoon');
 
                 // Check Afternoon Limit
                 if (afternoonsAssignedCount >= maxAfternoons) continue;
 
                 // Restrict split if global preference exists (e.g. Morning Only profile -> No Split)
-                if ((globalMorningOnly || globalAfternoonOnly) && !hasForceFullDays) continue;
-
-                // SATURDAY ROTATION LOGIC (Heuristic)
-                // Attempt to give Saturday off if it's "their turn"
-                // Seed based on week start date integer representation + employee index
-                if (dayOfWeek === 6) { // Saturday
-                    const weekTime = new Date(weekStartDate).getTime();
-                    const weekNum = Math.floor(weekTime / (7 * 24 * 60 * 60 * 1000));
-                    const empIndex = employees.findIndex(e => e.id === emp.id);
-                    const isTurnForOff = (weekNum + empIndex) % 4 === 0;
-
-                    // If Key Staff and Coverage is 0, IGNORE rotation (Must Work)
-                    const mustCover = isKeyEmp && coverage[day].keyStaff === 0;
-
-                    if (isTurnForOff && !mustCover) {
-                        // Deprioritize Saturday for this user -> skip split assignment on Saturday if possible
-                        // But only if we have enough OTHER days to fill slots
-                        const otherDaysCount = fullyAvailableDays.length - 1;
-                        if (otherDaysCount >= Math.ceil(slotsRemaining / 2)) {
-                            continue;
-                        }
-                    }
-                }
+                // OR if explicitly requested 'no_split'
+                if (((globalMorningOnly || globalAfternoonOnly) && !hasForceFullDays) || hasNoSplit) continue;
 
                 // Cannot do split if forced Morning Only or Afternoon Only on this specific day
                 // OR if afternoon is closed due to holiday
@@ -308,7 +475,6 @@ export const generateWeeklySchedule = (
                     assignedShifts[day] = 'split';
                     coverage[day].morning++;
                     coverage[day].afternoon++;
-                    if (isKeyEmp) coverage[day].keyStaff++;
                     slotsRemaining -= 2;
                     afternoonsAssignedCount++;
                 }
@@ -323,8 +489,8 @@ export const generateWeeklySchedule = (
             // That are available for this user
             const possibleSlots: { date: string, period: 'morning' | 'afternoon', load: number }[] = [];
 
-            // Re-calculate isKeyEmp in this scope
-            const isKeyEmp = isKeyRole(emp.category);
+            // Pick slots based on load
+            // ... logic continues below
 
             availableDays.forEach(date => {
                 // Check if day already taken by Split above
@@ -345,72 +511,159 @@ export const generateWeeklySchedule = (
                 const isAfternoonOnlyDay = afternoonRestriction && (!afternoonRestriction.days || afternoonRestriction.days.length === 0 || afternoonRestriction.days.includes(dayOfWeek));
 
                 // Holiday check
-                const hObj = holidays.find(h => typeof h === 'string' ? h === date : h.date === date);
+                // Holiday check
+                const hObj = holidays.find(h => {
+                    const hDate = typeof h === 'string' ? h : h.date;
+                    return normalizeDate(hDate) === normalizeDate(date);
+                });
                 const isAfternoonClosed = hObj && typeof hObj !== 'string' && (hObj.type === 'afternoon' || hObj.type === 'closed_afternoon');
 
-                const canMorning = (!req || req.type !== 'morning_off') && !isAfternoonOnlyDay;
+                // --- STRICT RULE: Afternoon only if Morning coverage > Afternoon coverage explicitly ---
+                // We check the CURRENT state of coverage for the day.
+                // Only allow adding an afternoon slot if adding it won't inhibit balance.
+                // User Rule: "Never more afternoon hours than morning".
+                // So we can trigger afternoon ONLY IF current Afternoon < current Morning.
 
-                // Can Afternoon if not off, not morning only, not closed, AND limit not reached
-                // Note: We check limit here, BUT for prioritization we assume we can add it. 
-                // We will check 'afternoonsAssignedCount' strictly during assignment loop.
-                const canAfternoon = (!req || req.type !== 'afternoon_off') && !isMorningOnlyDay && !isAfternoonClosed;
 
-                // Priority Modification
-                let slotPenalty = 0;
+                // Strict Day Violation Check
+                const isMDayViolation = morningRestriction && morningRestriction.days && morningRestriction.days.length > 0 && !morningRestriction.days.includes(dayOfWeek);
+                const isADayViolation = afternoonRestriction && afternoonRestriction.days && afternoonRestriction.days.length > 0 && !afternoonRestriction.days.includes(dayOfWeek);
 
-                // RESTRICTION PRIORITY
-                if (isMorningOnlyDay || isAfternoonOnlyDay) {
-                    slotPenalty -= 50;
-                }
+                const canMorning = (!req || req.type !== 'morning_off') && !isAfternoonOnlyDay && !isMDayViolation && !isADayViolation;
 
-                // KEY STAFF COVERAGE PRIORITY
-                if (isKeyEmp && coverage[date].keyStaff === 0) {
-                    slotPenalty -= 2000;
-                }
-
-                // Base penalty for Saturday/Sunday REMOVED
-                if (dayOfWeek === 6 || dayOfWeek === 0) slotPenalty += 0;
-
-                if (dayOfWeek === 6) {
-                    const weekTime = new Date(weekStartDate).getTime();
-                    const weekNum = Math.floor(weekTime / (7 * 24 * 60 * 60 * 1000));
-                    const empIndex = employees.findIndex(e => e.id === emp.id);
-                    const isTurnForOff = (weekNum + empIndex) % 4 === 0;
-
-                    // If Must Cover (Coverage 0), ignore rotation
-                    const mustCover = isKeyEmp && coverage[date].keyStaff === 0;
-
-                    if (isTurnForOff && !mustCover) {
-                        // Reduced from 1000 to 5 to allow balancing if load is very uneven
-                        slotPenalty += 5;
-                    }
-                }
+                // Can Afternoon checking:
+                // 1. Not off, Not Morning Only, Not Closed, Not Day Violation
+                const canAfternoon = (!req || req.type !== 'afternoon_off')
+                    && !isMorningOnlyDay
+                    && !isAfternoonClosed
+                    && !isMDayViolation
+                    && !isADayViolation;
+                // REMOVED STRICT BALANCE CHECK: && (currentAfternoonLoad < currentMorningLoad);
 
                 if (canMorning) {
                     possibleSlots.push({
                         date,
                         period: 'morning',
-                        // Weight: Current Load + Bias
-                        load: getLoad(date, 'morning') + slotPenalty
+                        load: getLoad(date, 'morning') // Base load
                     });
                 }
                 if (canAfternoon) {
                     possibleSlots.push({
                         date,
                         period: 'afternoon',
-                        load: getLoad(date, 'afternoon') + 0.5 + slotPenalty // Preference to Morning
+                        load: getLoad(date, 'afternoon') // Base load
                     });
                 }
             });
 
-            // Sort by Load Ascending
-            possibleSlots.sort((a, b) => a.load - b.load);
+            // Strategy Priority:
+            // 1. Fill Priority Slots (Key Roles, etc)
+            // 2. SOFT BIAS: Prefer Morning over Afternoon slightly.
+            // 3. SATURDAY PENALTY: Fill Saturday last (effectively "removing" hours from Saturday to complete schedule elsewhere first).
 
-            // Pick the best slots
+            possibleSlots.forEach(slot => {
+                let penalty = 0;
+
+                // --- PRIORITY 1: REFINED BALANCE (Minimal Negative Gap) ---
+                // Goal: Morning >= Afternoon (Diff 0 or +). Avoid Afternoon > Morning.
+                // Diff = Morning - Afternoon
+                const currentM = getLoad(slot.date, 'morning');
+                const currentA = getLoad(slot.date, 'afternoon');
+                const diff = currentM - currentA;
+
+                if (slot.period === 'morning') {
+                    if (diff < 0) penalty -= 50;      // Morning deficit -> FILL URGENTLY
+                    else if (diff === 0) penalty -= 0; // Neutral (keep balance)
+                    else penalty += 2;                // Morning surplus -> Slight soft block
+                } else { // afternoon
+                    if (diff < 0) penalty += 10;      // Afternoon surplus -> SOFT BLOCK (was 50, strictly prevented afternoon heavy days)
+                    else if (diff === 0) penalty += 0; // Neutral
+                    else penalty -= 2;                // Afternoon deficit -> Encourage slightly
+                }
+
+                // --- PRIORITY 2: SATURDAY/SUNDAY ---
+                // Saturday: PENALIZE (+0.2) - Minimal bias to just break ties
+                // Sunday: Reduce penalty to 1.0 to treat it more like a normal day if open.
+                const slotDate = new Date(slot.date);
+                if (slotDate.getDay() === 6) { // Saturday
+                    penalty += 0.2;
+                } else if (slotDate.getDay() === 0) { // Sunday (if open)
+                    penalty += 1.0;
+                }
+
+                // --- PRIORITY 3: RESTRICTIONS ---
+                const dayOfWeek = slotDate.getDay();
+                const morningRestriction = userPermRequests.find(r => r.type === 'morning_only');
+                const afternoonRestriction = userPermRequests.find(r => r.type === 'afternoon_only');
+
+                const isMorningOnlyDay = morningRestriction && (!morningRestriction.days || morningRestriction.days.length === 0 || morningRestriction.days.includes(dayOfWeek));
+                const isAfternoonOnlyDay = afternoonRestriction && (!afternoonRestriction.days || afternoonRestriction.days.length === 0 || afternoonRestriction.days.includes(dayOfWeek));
+
+                if ((slot.period === 'morning' && isAfternoonOnlyDay) || (slot.period === 'afternoon' && isMorningOnlyDay)) {
+                    penalty += 9999; // Effectively block but keep in list just in case (though filtered out by canMorning/canAfternoon usually)
+                }
+
+                // --- PRIORITY 3.5: PARTIAL HOLIDAY OPTIMIZATION ---
+                // If the day is a partial holiday (closed afternoon), we MUST prioritize using the morning slot
+                // because it's a constrained resource (use it or lose it).
+                // --- PRIORITY 3.5: PARTIAL HOLIDAY OPTIMIZATION ---
+                // If the day is a partial holiday (closed afternoon), we MUST prioritize using the morning slot
+                // because it's a constrained resource (use it or lose it).
+                const hObj = holidays.find(h => {
+                    const hDate = typeof h === 'string' ? h : h.date;
+                    return normalizeDate(hDate) === normalizeDate(slot.date);
+                });
+                const isAfternoonClosed = hObj && typeof hObj !== 'string' && (hObj.type === 'afternoon' || hObj.type === 'closed_afternoon');
+
+                if (isAfternoonClosed && slot.period === 'morning') {
+                    penalty -= 100; // Huge bonus to ensure this slot is picked if available
+                }
+
+                // --- PRIORITY 4: SPREAD SHIFTS (Low Hours) ---
+                // If not High Hours (Full Time), avoid Split Shifts to maximize days covered.
+                if (!isHighHours && assignedShifts[slot.date]) {
+                    penalty += 2000;
+                }
+
+                slot.load += penalty;
+            });
+
+            // Sort by Load Ascending (Lowest load = Best Slot)
+            // RANDOMIZATION: Shuffle first, then sort strict load.
+            shuffleArray(possibleSlots).sort((a, b) => a.load - b.load);
+
             for (const slot of possibleSlots) {
                 if (slotsRemaining <= 0) break;
 
-                // STRICT LIMIT CHECK
+                // STRICT Anti-Split for Low Hours (Dynamic)
+                // If we already have a shift on this day, SKIP.
+                // This forces spreading the shifts to other days.
+                if (!isHighHours && assignedShifts[slot.date]) continue;
+
+                // STRICT FIXED RESTRICTIONS (Absolute Priority)
+                // Need to recalculate restrictions as we are outside the date loop
+                const slotDateObj = new Date(slot.date);
+                const slotDayOfWeek = slotDateObj.getDay();
+
+                const mRest = userPermRequests.find(r => r.type === 'morning_only');
+                const aRest = userPermRequests.find(r => r.type === 'afternoon_only');
+
+                // STRICT DAY CHECK: If days are defined, work is ONLY allowed on those days.
+                // If Morning Only is set for [Mon, Tue], working on Wed is FORBIDDEN.
+                if (mRest && mRest.days && mRest.days.length > 0 && !mRest.days.includes(slotDayOfWeek)) continue;
+                if (aRest && aRest.days && aRest.days.length > 0 && !aRest.days.includes(slotDayOfWeek)) continue;
+
+                // STRICT PERIOD CHECK: If day is allowed, Period must match.
+                // If Mon is in Morning Only, Afternoon is FORBIDDEN.
+                // Note: We already know day is allowed or global here.
+                const isMOnly = mRest && (!mRest.days || mRest.days.length === 0 || mRest.days.includes(slotDayOfWeek));
+                const isAOnly = aRest && (!aRest.days || aRest.days.length === 0 || aRest.days.includes(slotDayOfWeek));
+
+                if ((slot.period === 'morning' && isAOnly) || (slot.period === 'afternoon' && isMOnly)) {
+                    continue;
+                }
+
+                // STRICT LIMIT CHECK (Max Afternoons) - This remains valid logic
                 if (slot.period === 'afternoon' && afternoonsAssignedCount >= maxAfternoons) continue;
 
                 // Re-calculate local restrictions for upgrade check
@@ -419,24 +672,104 @@ export const generateWeeklySchedule = (
                 if (!currentType) {
                     assignedShifts[slot.date] = slot.period;
                     coverage[slot.date][slot.period]++;
-                    if (isKeyEmp) coverage[slot.date].keyStaff++;
                     slotsRemaining--;
                     if (slot.period === 'afternoon') afternoonsAssignedCount++;
                 } else if (currentType !== 'split' && currentType !== slot.period) {
                     // We have one side, adding the other -> Split
-                    // Only allowed if NOT morningOnly/afternoonOnly GLOBAL (prevent accidental splits for mono-turn profiles)
-                    // AND afternoon limit not reached
-                    // AND afternoon is NOT CLOSED
-                    const slotHoliday = holidays.find(h => typeof h === 'string' ? h === slot.date : h.date === slot.date);
+                } else if (currentType !== 'split' && currentType !== slot.period) {
+                    // We have one side, adding the other -> Split
+                    const slotHoliday = holidays.find(h => {
+                        const hDate = typeof h === 'string' ? h : h.date;
+                        return normalizeDate(hDate) === normalizeDate(slot.date);
+                    });
                     const isSlotAfternoonClosed = slotHoliday && typeof slotHoliday !== 'string' && (slotHoliday.type === 'afternoon' || slotHoliday.type === 'closed_afternoon');
 
                     if (!globalMorningOnly && !globalAfternoonOnly && !isSlotAfternoonClosed) {
                         if (afternoonsAssignedCount < maxAfternoons) {
-                            assignedShifts[slot.date] = 'split'; // Upgrade
+                            // Upgrade to Split
+                            // No strict balance check here anymore. 
+                            assignedShifts[slot.date] = 'split';
                             coverage[slot.date][slot.period]++;
                             slotsRemaining--;
                             afternoonsAssignedCount++;
                         }
+                    }
+                }
+            }
+
+            // --- FALLBACK: FORCE FILL IF NEEDED ---
+            // If we still have hours to assign (Ruben case), we must assign them SOMEWHERE.
+            // We iterate ALL week dates to find any valid slot.
+            if (slotsRemaining > 0) {
+                for (const day of weekDates) {
+                    if (slotsRemaining <= 0) break;
+
+                    // Respect Days Off and Holidays
+                    // We only skip if explicitly marked 'off' or 'holiday'.
+                    // Note: dayStatus might be undefined for regular work days
+                    if (dayStatus[day]) continue;
+
+                    const dayObj = new Date(day);
+                    const dayOfWeek = dayObj.getDay();
+
+                    // Restrictions
+                    const morningRestriction = userPermRequests.find(r => r.type === 'morning_only');
+                    const afternoonRestriction = userPermRequests.find(r => r.type === 'afternoon_only');
+
+                    // STRICT DAY CHECK in Fallback: Block forbidden days
+                    if (morningRestriction && morningRestriction.days && morningRestriction.days.length > 0 && !morningRestriction.days.includes(dayOfWeek)) continue;
+                    if (afternoonRestriction && afternoonRestriction.days && afternoonRestriction.days.length > 0 && !afternoonRestriction.days.includes(dayOfWeek)) continue;
+
+                    const isMorningOnlyDay = morningRestriction && (!morningRestriction.days || morningRestriction.days.length === 0 || morningRestriction.days.includes(dayOfWeek));
+                    const isAfternoonOnlyDay = afternoonRestriction && (!afternoonRestriction.days || afternoonRestriction.days.length === 0 || afternoonRestriction.days.includes(dayOfWeek));
+
+                    // Holiday Closing
+                    // Holiday Closing
+                    const hObj = holidays.find(h => {
+                        const hDate = typeof h === 'string' ? h : h.date;
+                        return normalizeDate(hDate) === normalizeDate(day);
+                    });
+                    const isAfternoonClosed = hObj && typeof hObj !== 'string' && (hObj.type === 'afternoon' || hObj.type === 'closed_afternoon');
+                    const isFullHoliday = hObj && (typeof hObj === 'string' || hObj.type === 'full');
+                    if (isFullHoliday) continue;
+
+                    const timeOffReq = timeOffRequests.find(r =>
+                        r.employeeId === emp.id &&
+                        (r.dates.includes(day) || (r.startDate && r.endDate && day >= r.startDate && day <= r.endDate))
+                    );
+
+                    const currentType = assignedShifts[day];
+
+                    // Try assigning Morning
+                    const canMorning = (!timeOffReq || timeOffReq.type !== 'morning_off') &&
+                        (!currentType || currentType === 'afternoon') &&
+                        !isAfternoonOnlyDay &&
+                        !globalAfternoonOnly &&
+                        assignedShifts[day] !== 'morning' &&
+                        assignedShifts[day] !== 'split';
+
+                    if (canMorning) {
+                        assignedShifts[day] = currentType === 'afternoon' ? 'split' : 'morning';
+                        coverage[day]['morning']++;
+                        slotsRemaining--;
+                        if (slotsRemaining <= 0) break;
+                    }
+
+                    // Try assigning Afternoon
+                    const canAfternoon = (!timeOffReq || timeOffReq.type !== 'afternoon_off') &&
+                        (!currentType || currentType === 'morning') &&
+                        !isMorningOnlyDay &&
+                        !globalMorningOnly &&
+                        !isAfternoonClosed &&
+                        assignedShifts[day] !== 'afternoon' &&
+                        assignedShifts[day] !== 'split' &&
+                        afternoonsAssignedCount < maxAfternoons; // STRICT MAX CHECK
+
+                    if (canAfternoon) {
+                        assignedShifts[day] = currentType === 'morning' ? 'split' : 'afternoon';
+                        coverage[day]['afternoon']++;
+                        slotsRemaining--;
+                        afternoonsAssignedCount++;
                     }
                 }
             }
@@ -593,10 +926,16 @@ export const validatePermanentRestrictions = (
                 const dayIndex = getDayIndex(s.date);
                 const appliesToDay = !req.days || req.days.length === 0 || req.days.includes(dayIndex);
 
-                if (appliesToDay) {
-                    if (s.type === 'afternoon' || s.type === 'split') {
+                if (s.type !== 'off' && s.type !== 'holiday' && s.type !== 'vacation' && s.type !== 'sick_leave' && s.type !== 'maternity_paternity') {
+                    if (appliesToDay) {
+                        if (s.type === 'afternoon' || s.type === 'split') {
+                            const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][dayIndex];
+                            warnings.push(`Restricción Violada: ${emp.name} tiene "Solo Mañanas" el ${dayName} pero tiene turno de ${s.type === 'afternoon' ? 'Tarde' : 'Partido'}.`);
+                        }
+                    } else {
+                        // User expectation: If days are specified (e.g. Mon-Fri), working on Sat is a potential violation/warning
                         const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][dayIndex];
-                        warnings.push(`Restricción Violada: ${emp.name} tiene "Solo Mañanas" pero tiene turno de ${s.type === 'afternoon' ? 'Tarde' : 'Partido'} el ${dayName}.`);
+                        warnings.push(`Restricción Violada (Días): ${emp.name} tiene turno el ${dayName} (Fuera de los días definidos en 'Solo Mañanas').`);
                     }
                 }
             });
@@ -607,10 +946,16 @@ export const validatePermanentRestrictions = (
                 const dayIndex = getDayIndex(s.date);
                 const appliesToDay = !req.days || req.days.length === 0 || req.days.includes(dayIndex);
 
-                if (appliesToDay) {
-                    if (s.type === 'morning' || s.type === 'split') {
+                if (s.type !== 'off' && s.type !== 'holiday' && s.type !== 'vacation' && s.type !== 'sick_leave' && s.type !== 'maternity_paternity') {
+                    if (appliesToDay) {
+                        if (s.type === 'morning' || s.type === 'split') {
+                            const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][dayIndex];
+                            warnings.push(`Restricción Violada: ${emp.name} tiene "Solo Tardes" el ${dayName} pero tiene turno de ${s.type === 'morning' ? 'Mañana' : 'Partido'}.`);
+                        }
+                    } else {
+                        // User expectation: If days are specified (e.g. Mon-Fri), working on Sat is a potential violation/warning
                         const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][dayIndex];
-                        warnings.push(`Restricción Violada: ${emp.name} tiene "Solo Tardes" pero tiene turno de ${s.type === 'morning' ? 'Mañana' : 'Partido'} el ${dayName}.`);
+                        warnings.push(`Restricción Violada (Días): ${emp.name} tiene turno el ${dayName} (Fuera de los días definidos en 'Solo Tardes').`);
                     }
                 }
             });
@@ -637,9 +982,16 @@ export const validatePermanentRestrictions = (
             if (diffWeeks >= 0) {
                 const cycleIndex = diffWeeks % req.cycleWeeks.length;
                 const daysOff = req.cycleWeeks[cycleIndex];
+                // Support both legacy and new structure
+                let daysOffList: number[] = [];
+                if (Array.isArray(daysOff)) {
+                    daysOffList = daysOff;
+                } else if (daysOff && Array.isArray((daysOff as any).days)) {
+                    daysOffList = (daysOff as any).days;
+                }
 
-                if (daysOff && daysOff.length > 0) {
-                    daysOff.forEach(dayIndex => {
+                if (daysOffList && daysOffList.length > 0) {
+                    daysOffList.forEach((dayIndex: number) => {
                         const shift = empShifts.find(s => getDayIndex(s.date) === dayIndex);
                         if (shift && shift.type !== 'off' && shift.type !== 'holiday' && shift.type !== 'vacation' && shift.type !== 'sick_leave' && shift.type !== 'maternity_paternity') {
                             const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][dayIndex];
@@ -681,7 +1033,12 @@ export const validateRegisterCoverage = (schedule: WeeklySchedule, settings: Sto
         const dateObj = new Date(date);
         const isSunday = dateObj.getDay() === 0;
         const isOpenSunday = settings.openSundays?.includes(date);
-        const holiday = settings.holidays?.find(h => h.date === date);
+        const holiday = settings.holidays?.find(h => {
+            const hDate = typeof h === 'string' ? h : h.date;
+            // Simple fallback normalize if function not in scope here
+            const norm = (d: any) => typeof d === 'string' ? d.split('T')[0].trim() : (d?.date ? String(d.date).split('T')[0] : String(d));
+            return norm(hDate) === norm(date);
+        });
 
         // Skip if store is closed
         if (isSunday && !isOpenSunday) return;
@@ -809,8 +1166,20 @@ export const validateFullSchedule = (
         const contractHours = targetHours;
         let numDaysToReduce = 0;
 
+
+
         weekDates.forEach(d => {
-            const h = currentHolidays.find((holiday: any) => (typeof holiday === 'string' ? holiday : holiday.date) === d);
+            const h = currentHolidays.find((holiday: any) => {
+                const hDate = typeof holiday === 'string' ? holiday : holiday.date;
+                // Inline normalize to avoid scope issues or extensive Refactor
+                const norm = (val: any) => {
+                    if (typeof val === 'string') return val.split('T')[0].trim();
+                    if (val?.toDate) return val.toDate().toISOString().split('T')[0];
+                    if (val instanceof Date) return val.toISOString().split('T')[0];
+                    return String(val);
+                };
+                return norm(hDate) === norm(d);
+            });
             const isFullHoliday = h && (typeof h === 'string' || h.type === 'full');
             const isPartialHoliday = h && typeof h !== 'string' && (h.type === 'afternoon' || h.type === 'closed_afternoon');
             const isAbsence = timeOffRequests.some(r =>
@@ -907,20 +1276,10 @@ export const validateFullSchedule = (
 
             if (!shiftOpening) {
                 strictWarnings.push(`Falta APERTURA (A) el ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()}`);
-            } else {
-                const empOpener = employees.find(e => e.id === shiftOpening.employeeId);
-                if (empOpener && !['Gerente', 'Subgerente', 'Responsable'].includes(empOpener.category)) {
-                    strictWarnings.push(`Apertura sin Responsable: El ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()} la apertura la hace ${empOpener.name} (${empOpener.category}).`);
-                }
             }
 
             if (!shiftClosing) {
                 strictWarnings.push(`Falta CIERRE (C) el ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()}`);
-            } else {
-                const empCloser = employees.find(e => e.id === shiftClosing.employeeId);
-                if (empCloser && !['Gerente', 'Subgerente', 'Responsable'].includes(empCloser.category)) {
-                    strictWarnings.push(`Cierre sin Responsable: El ${new Date(date).toLocaleDateString('es-ES', { weekday: 'long' })} ${new Date(date).getDate()} el cierre lo hace ${empCloser.name} (${empCloser.category}).`);
-                }
             }
         }
     });

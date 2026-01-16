@@ -232,7 +232,8 @@ const SupervisorLive: React.FC = () => {
         if (!e.history || e.history.length === 0) return e.active;
 
         const sortedHistory = [...e.history].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        const entriesBefore = sortedHistory.filter(h => h.date <= todayStr);
+        // Fix: truncation to YYYY-MM-DD for comparison to ensure IDs/Events from today are included
+        const entriesBefore = sortedHistory.filter(h => h.date.substring(0, 10) <= todayStr);
         let activeNow = false;
 
         if (entriesBefore.length > 0) {
@@ -278,7 +279,7 @@ const SupervisorLive: React.FC = () => {
                 storeName,
                 shift: todayShift
             });
-        } else if (todayShift?.type === 'sick_leave') {
+        } else if (todayShift?.type === 'sick_leave' || todayShift?.type === 'maternity_paternity') {
             sickToday.push({
                 ...emp,
                 storeName
@@ -286,7 +287,6 @@ const SupervisorLive: React.FC = () => {
         } else {
             let reason = 'Descanso';
             if (todayShift?.type === 'vacation') reason = 'Vacaciones';
-            else if (todayShift?.type === 'maternity_paternity') reason = 'Maternidad/Paternidad';
             // Sick leave is handled in sickToday
 
             restingToday.push({

@@ -90,7 +90,7 @@ const SupervisorDashboard: React.FC = () => {
         if (!e.history || e.history.length === 0) return true;
 
         const sortedHistory = [...e.history].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        const entriesBefore = sortedHistory.filter(h => h.date <= nowStr);
+        const entriesBefore = sortedHistory.filter(h => h.date.substring(0, 10) <= nowStr);
         let isActive = false;
 
         if (entriesBefore.length > 0) {
@@ -143,15 +143,11 @@ const SupervisorDashboard: React.FC = () => {
             if (adj) c += adj.hours;
             globalYearlyContractedHours += c;
 
-            const weekDates = Array.from({ length: 7 }, (_, i) => {
-                const d = parseLocalDate(s.weekStartDate);
-                d.setDate(d.getDate() + i);
-                return formatLocalDate(d);
-            });
+            if (adj) c += adj.hours;
+            globalYearlyContractedHours += c;
 
-            const daysInWeek = timeOffRequests
-                .filter(r => r.employeeId === emp.id && r.type === 'sick_leave' && r.status === 'approved' && r.dates && Array.isArray(r.dates))
-                .reduce((acc, r) => acc + r.dates.filter(d => weekDates.includes(d)).length, 0);
+            const weekShifts = s.shifts.filter(sh => sh.employeeId === emp.id);
+            const daysInWeek = weekShifts.filter(sh => sh.type === 'sick_leave' || sh.type === 'maternity_paternity').length;
 
             globalYearlySickHours += (emp.weeklyHours / 5) * Math.min(5, daysInWeek);
         });
@@ -170,10 +166,12 @@ const SupervisorDashboard: React.FC = () => {
     const storeStats = storeIds.map(id => {
         const storeEmps = employees.filter(e => {
             if (e.establishmentId !== id) return false;
+            // Only active employees for current stats? Or also inactive? 
+            // The original code filtered active. Keeping it consistent.
             if (!e.active) return false;
             if (!e.history || e.history.length === 0) return true;
             const sortedHistory = [...e.history].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-            const entriesBefore = sortedHistory.filter(h => h.date <= nowStr);
+            const entriesBefore = sortedHistory.filter(h => h.date.substring(0, 10) <= nowStr);
             let isActive = false;
             if (entriesBefore.length > 0) {
                 const lastEntry = entriesBefore[entriesBefore.length - 1];
@@ -203,10 +201,11 @@ const SupervisorDashboard: React.FC = () => {
             if (adj) contracted += adj.hours;
             const shifts = currentScheduleValue?.shifts.filter(s => s.employeeId === emp.id) || [];
             const worked = shifts.reduce((acc, s) => acc + getShiftHours(s, id), 0);
-            const isOnLeave = timeOffRequests.some(r =>
-                r.employeeId === emp.id && (r.type === 'sick_leave' || r.type === 'maternity_paternity') && r.status === 'approved' &&
-                r.dates && Array.isArray(r.dates) && r.dates.some(d => weekDates.includes(d))
-            );
+
+            // Check ON LEAVE status based on SHIFTS if available, otherwise fallback to requests (for future/draft)
+            // Actually, if we are looking at current week, shifts are authoritative if schedule exists.
+            const isOnLeave = shifts.some(s => s.type === 'sick_leave' || s.type === 'maternity_paternity');
+
             weeklyContractedTotal += contracted;
             return {
                 id: emp.id, name: emp.name, baseHours: emp.weeklyHours, extension: adj?.hours || 0,
@@ -219,20 +218,20 @@ const SupervisorDashboard: React.FC = () => {
 
         let leaveHoursSum = 0;
         let vacationHoursSum = 0;
+
         storeEmps.forEach(emp => {
-            const empRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.status === 'approved');
-            const weekSickDays = new Set<string>();
-            const weekVacationDays = new Set<string>();
-            empRequests.forEach(r => {
-                if (r.dates && Array.isArray(r.dates)) {
-                    r.dates.filter(date => weekDates.includes(date)).forEach(d => {
-                        if (r.type === 'sick_leave') weekSickDays.add(d);
-                        if (r.type === 'vacation') weekVacationDays.add(d);
-                    });
-                }
-            });
-            leaveHoursSum += (emp.weeklyHours / 5) * Math.min(5, weekSickDays.size);
-            vacationHoursSum += (emp.weeklyHours / 5) * Math.min(5, weekVacationDays.size);
+            // Use SHIFTS from current schedule if exists
+            if (currentScheduleValue) {
+                const shifts = currentScheduleValue.shifts.filter(s => s.employeeId === emp.id);
+                const sickDays = shifts.filter(s => s.type === 'sick_leave' || s.type === 'maternity_paternity').length;
+                const vacationDays = shifts.filter(s => s.type === 'vacation').length;
+
+                leaveHoursSum += (emp.weeklyHours / 5) * Math.min(5, sickDays);
+                vacationHoursSum += (emp.weeklyHours / 5) * Math.min(5, vacationDays);
+            } else {
+                // Fallback to requests if no schedule generated yet? 
+                // Keeping it simple: if no schedule, 0 hours.
+            }
         });
 
         const leaveHoursPercent = weeklyContractedTotal > 0 ? (leaveHoursSum / weeklyContractedTotal) * 100 : 0;
@@ -240,6 +239,7 @@ const SupervisorDashboard: React.FC = () => {
 
         let totalYearlyVacationDays = 0;
         storeEmps.forEach(emp => {
+            // For Vacation Programming %, we still look at Requests because it's about "Programmed" (future) too.
             const empVacations = timeOffRequests.filter(r =>
                 r.employeeId === emp.id && r.type === 'vacation' && r.status === 'approved' &&
                 r.dates && Array.isArray(r.dates) && r.dates.some(d => d.startsWith(currentYear.toString()))
@@ -262,14 +262,10 @@ const SupervisorDashboard: React.FC = () => {
                 const adj = emp.tempHours?.find(t => s.weekStartDate >= t.start && s.weekStartDate <= t.end);
                 if (adj) c += adj.hours;
                 storeYearlyContractedHours += c;
-                const wDates = Array.from({ length: 7 }, (_, i) => {
-                    const d = parseLocalDate(s.weekStartDate);
-                    d.setDate(d.getDate() + i);
-                    return formatLocalDate(d);
-                });
-                const daysInWeek = timeOffRequests
-                    .filter(r => r.employeeId === emp.id && r.type === 'sick_leave' && r.status === 'approved' && r.dates && Array.isArray(r.dates))
-                    .reduce((acc, r) => acc + r.dates.filter(d => wDates.includes(d)).length, 0);
+
+                const weekShifts = s.shifts.filter(sh => sh.employeeId === emp.id);
+                const daysInWeek = weekShifts.filter(sh => sh.type === 'sick_leave' || sh.type === 'maternity_paternity').length;
+
                 storeYearlySickHours += (emp.weeklyHours / 5) * Math.min(5, daysInWeek);
             });
         });
@@ -289,20 +285,12 @@ const SupervisorDashboard: React.FC = () => {
         return monthNames.map((name, monthIdx) => {
             const monthWeeks = schedules.filter(s => {
                 const d = parseLocalDate(s.weekStartDate);
-                const matchesStore = filterStoreId === 'all' || s.establishmentId === filterStoreId;
-                return d.getFullYear() === year && d.getMonth() === monthIdx && matchesStore && s.status === 'published';
+                return d.getFullYear() === year && d.getMonth() === monthIdx && (filterStoreId === 'all' || s.establishmentId === filterStoreId) && s.status === 'published';
             });
             let totalWorked = 0, totalContracted = 0, totalVacation = 0, totalSick = 0, coverageSum = 0, weeksWithData = 0;
             const relevantEmps = employees.filter(e => e.active && (filterStoreId === 'all' || e.establishmentId === filterStoreId));
 
             monthWeeks.forEach(s => {
-                // Calculate week dates for overlap check
-                const weekDates = Array.from({ length: 7 }, (_, i) => {
-                    const d = parseLocalDate(s.weekStartDate);
-                    d.setDate(d.getDate() + i);
-                    return formatLocalDate(d);
-                });
-
                 const worked = s.shifts.reduce((acc, shift) => acc + getShiftHours(shift, s.establishmentId), 0);
 
                 let weekContracted = 0;
@@ -312,16 +300,10 @@ const SupervisorDashboard: React.FC = () => {
                     if (adj) c += adj.hours;
                     weekContracted += c;
 
-                    // Calculate Week Sick/Vacation for this employee in this week
-                    const empRequests = timeOffRequests.filter(r => r.employeeId === e.id && r.status === 'approved' && r.dates && Array.isArray(r.dates));
-
-                    let sickDays = 0;
-                    let vacationDays = 0;
-                    empRequests.forEach(r => {
-                        const matchCount = r.dates!.filter(d => weekDates.includes(d)).length;
-                        if (r.type === 'sick_leave') sickDays += matchCount;
-                        if (r.type === 'vacation') vacationDays += matchCount;
-                    });
+                    // Calculate Week Sick/Vacation using SHIFTS
+                    const empShifts = s.shifts.filter(sh => sh.employeeId === e.id);
+                    const sickDays = empShifts.filter(sh => sh.type === 'sick_leave' || sh.type === 'maternity_paternity').length;
+                    const vacationDays = empShifts.filter(sh => sh.type === 'vacation').length;
 
                     if (sickDays > 0) totalSick += (e.weeklyHours / 5) * Math.min(5, sickDays);
                     if (vacationDays > 0) totalVacation += (e.weeklyHours / 5) * Math.min(5, vacationDays);
@@ -353,18 +335,8 @@ const SupervisorDashboard: React.FC = () => {
                     if (adj) c += adj.hours;
                     totalContracted += c;
 
-                    // Calculate Week Sick for this employee
-                    const weekDates = Array.from({ length: 7 }, (_, i) => {
-                        const d = parseLocalDate(s.weekStartDate);
-                        d.setDate(d.getDate() + i);
-                        return formatLocalDate(d);
-                    });
-
-                    const sickRequests = timeOffRequests.filter(r => r.employeeId === emp.id && r.type === 'sick_leave' && r.status === 'approved' && r.dates);
-                    let days = 0;
-                    sickRequests.forEach(r => {
-                        days += r.dates!.filter(d => weekDates.includes(d)).length;
-                    });
+                    // Calculate Week Sick using SHIFTS
+                    const days = empShifts.filter(sh => sh.type === 'sick_leave' || sh.type === 'maternity_paternity').length;
                     if (days > 0) totalSick += (emp.weeklyHours / 5) * Math.min(5, days);
                 }
             });
@@ -444,7 +416,7 @@ const SupervisorDashboard: React.FC = () => {
     const microloansMonthlyEvolution = React.useMemo(() => {
         return Array.from({ length: 6 }).map((_, i) => {
             const d = new Date();
-            d.setMonth(d.getMonth() - i);
+            d.setMonth(d.getMonth() - i - 1);
             const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
             // Sum of all reports for this month across all stores
             const total = incentiveReports
@@ -932,7 +904,7 @@ const SupervisorDashboard: React.FC = () => {
                                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Por Tienda</p>
                             </div>
                             <div className="space-y-3 overflow-y-auto custom-scrollbar max-h-[160px] pr-2">
-                                {microloansStoreStats.map((store, i) => (
+                                {microloansStoreStats.map((store) => (
                                     <div key={store.id} className="relative group/item">
                                         <div className="flex justify-between items-center text-xs relative z-10 mb-1">
                                             <span className={clsx("font-bold truncate max-w-[120px]", store.hasReport ? "text-slate-200" : "text-slate-600")}>

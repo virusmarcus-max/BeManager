@@ -12,6 +12,7 @@ interface DatePickerProps {
     required?: boolean;
     disabled?: boolean;
     variant?: 'light' | 'dark';
+    isDateDisabled?: (date: Date) => boolean;
 }
 
 function clsx(...classes: (string | boolean | undefined | null)[]) {
@@ -27,8 +28,10 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     max,
     required = false,
     disabled = false,
-    variant = 'dark'
+    variant = 'dark',
+    isDateDisabled
 }) => {
+    // ... existing state ...
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const [coords, setCoords] = useState({ top: 0, left: 0, openUp: false });
@@ -54,25 +57,6 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     // Handle click outside to close
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            // Check if click is inside the container (input) or the portal (dropdown)
-            // Since portal is in body, we need a way to reference it? 
-            // Actually, we can rely on the fact that stopPropagation is on the dropdown content.
-            // But if we click outside both, we close.
-
-            // To make this robust with Portal, check if target is inside containerRef.
-            // If it IS inside containerRef, we toggle (which is handled by button onClick).
-            // If it is NOT inside containerRef, we close.
-            // BUT, clicking inside the Portal (dropdown) must NOT close.
-            // The dropdown content has `onClick={(e) => e.stopPropagation()}` ? 
-            // Wait, document listener catches all. 
-            // We need a ref for the dropdown content too if we want to check `contains`.
-
-            // Simpler approach: 
-            // The dropdown div stops bubbling to document? No, Portal bubbling is weird in React (it bubbles to React tree parent, but DOM event bubbles to body).
-            // React events bubble through Portal. Native events bubble up DOM.
-            // So `handleClickOutside` attached to `document` will fire for clicks in Portal.
-
-            // We need to exclude clicks on the dropdown.
             const dropdown = document.getElementById('datepicker-dropdown');
             if (
                 containerRef.current &&
@@ -85,7 +69,6 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 
         if (isOpen) {
             document.addEventListener('mousedown', handleClickOutside);
-            // Close on scroll to prevent detached floating
             window.addEventListener('scroll', () => setIsOpen(false), { capture: true });
         }
         return () => {
@@ -98,7 +81,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         if (containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
             const spaceBelow = window.innerHeight - rect.bottom;
-            const openUp = spaceBelow < 400; // If less than 400px below, open up
+            const openUp = spaceBelow < 400;
 
             setCoords({
                 top: openUp ? rect.top - 8 : rect.bottom + 8,
@@ -166,7 +149,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         const maxDate = max ? new Date(max) : null;
         if (maxDate) maxDate.setHours(0, 0, 0, 0);
 
-        const blanks = Array.from({ length: startDay }, (_, i) => <div key={`blank-${i}`} className="h-8 w-8" />);
+        const blanks = Array.from({ length: startDay }, (_, i) => <div key={`blank-${i}`} className="h-9 w-9" />);
         const days = Array.from({ length: totalDays }, (_, i) => {
             const day = i + 1;
             const currentDateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -178,6 +161,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
             let isDisabledDay = false;
             if (minDate && currentDate < minDate) isDisabledDay = true;
             if (maxDate && currentDate > maxDate) isDisabledDay = true;
+            if (isDateDisabled && isDateDisabled(currentDate)) isDisabledDay = true;
 
             return (
                 <button
@@ -186,7 +170,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                     disabled={isDisabledDay}
                     onClick={(e) => { e.stopPropagation(); handleDayClick(day); }}
                     className={clsx(
-                        "h-8 w-8 rounded-full flex items-center justify-center text-sm transition-colors",
+                        "h-9 w-9 rounded-full flex items-center justify-center text-sm transition-colors",
                         isSelected ? 'bg-indigo-600 text-white font-bold' : '',
                         !isSelected && !isDisabledDay ? (isLight ? 'hover:bg-slate-100 text-slate-700' : 'hover:bg-slate-800 text-slate-200') : '',
                         isDisabledDay ? (isLight ? 'text-slate-200 cursor-not-allowed' : 'text-slate-700 cursor-not-allowed') : '',
@@ -271,14 +255,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                     </div>
 
                     <div className="grid grid-cols-7 gap-1.5">
-                        {renderCalendar().map((item, idx) => {
-                            if (React.isValidElement(item) && item.key?.toString().startsWith('blank')) {
-                                return <div key={idx} className="h-9 w-9" />;
-                            }
-
-                            // Just render the item as is, it's a button
-                            return item;
-                        })}
+                        {renderCalendar()}
                     </div>
 
                     <div className={clsx("mt-6 flex justify-between pt-5 border-t", isLight ? "border-slate-100" : "border-slate-800/50")}>

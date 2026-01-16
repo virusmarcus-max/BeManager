@@ -123,7 +123,7 @@ const IncentivesSupervisor = () => {
     });
 
     // Modal States
-    const [actionModal, setActionModal] = useState<{ isOpen: boolean; type: 'approve' | 'reject' | null }>({
+    const [actionModal, setActionModal] = useState<{ isOpen: boolean; type: 'approve' | 'reject' | 'unlock' | null }>({
         isOpen: false,
         type: null
     });
@@ -148,7 +148,7 @@ const IncentivesSupervisor = () => {
     }, [selectedReportId]);
 
     // Grouping reports
-    const pendingReports = incentiveReports.filter(r => r.status === 'pending_approval');
+    const pendingReports = incentiveReports.filter(r => r.status === 'pending_approval' || r.status === 'modification_requested');
 
     // Filter Approved Reports
     const approvedReports = useMemo(() => {
@@ -257,17 +257,35 @@ const IncentivesSupervisor = () => {
                 status: 'approved',
                 approvedAt: new Date().toISOString()
             });
+            setSelectedReportId(null);
         } else if (actionModal.type === 'reject') {
+            // Rejecting behavior depends on current status
+            // If it was 'pending_approval', goes to 'changes_requested'
+            // If it was 'modification_requested', goes back to 'approved' (denied request)
+
+            if (selectedReport.status === 'modification_requested') {
+                updateIncentiveReport({
+                    ...selectedReport,
+                    status: 'approved',
+                    supervisorNotes: rejectNote
+                });
+            } else {
+                updateIncentiveReport({
+                    ...selectedReport,
+                    status: 'changes_requested',
+                    supervisorNotes: rejectNote
+                });
+            }
+
+            // If we are rejecting (sending back to manager or denying unlock), deselect report
+            setSelectedReportId(null);
+        } else if (actionModal.type === 'unlock') {
+            // Unlock for editing (back to draft or pending? usually draft so manager can edit)
             updateIncentiveReport({
                 ...selectedReport,
-                status: 'changes_requested',
-                supervisorNotes: rejectNote
+                status: 'draft', // Manager can edit
+                supervisorNotes: 'Desbloqueado para modificación'
             });
-            // If we are rejecting (sending back to manager), deselect the report as it goes out of supervisor view conceptually
-            // adjust this if needed
-            if (actionModal.type === 'reject') {
-                setSelectedReportId(null);
-            }
         }
         setActionModal({ isOpen: false, type: null });
     };
@@ -318,7 +336,7 @@ const IncentivesSupervisor = () => {
         }, 500);
 
         return () => clearTimeout(timer);
-    }, [localConfig, selectedReportId, employees]);
+    }, [localConfig, selectedReportId, employees, selectedReport]);
 
     const handleLocalChange = (field: keyof typeof localConfig, val: any) => {
         setLocalConfig(prev => ({ ...prev, [field]: val }));
@@ -333,6 +351,7 @@ const IncentivesSupervisor = () => {
         // Headers - Simplified for pure data
         const headers = [
             'Empleado',
+            'Días Baja',
             'Incentivo Base',
             'Total Bonificaciones',
             'Total Deducciones',
@@ -359,6 +378,7 @@ const IncentivesSupervisor = () => {
 
             return [
                 clean(item.employeeName),
+                item.sickDays || 0,
                 item.baseAmount.toFixed(2).replace('.', ','),
                 totalBonuses.toFixed(2).replace('.', ','),
                 totalDeductions.toFixed(2).replace('.', ','),
@@ -599,20 +619,42 @@ const IncentivesSupervisor = () => {
 
                                 {/* Actions Toolbar (Moved to Top) */}
                                 <div className="mb-8 flex justify-end gap-4 print:hidden relative z-50">
-                                    <button
-                                        onClick={handleExportExcel}
-                                        className="px-6 py-3 rounded-2xl border border-emerald-500/30 text-emerald-400 font-bold hover:bg-emerald-500/10 transition-colors flex items-center gap-2 cursor-pointer"
-                                    >
-                                        <FileSpreadsheet size={20} /> Excel
-                                    </button>
-                                    <button
-                                        onClick={() => { console.log('Print clicked'); handlePrint(); }}
-                                        className="px-6 py-3 rounded-2xl border border-slate-700 text-slate-300 font-bold hover:bg-slate-800 transition-colors flex items-center gap-2 cursor-pointer"
-                                    >
-                                        <Printer size={20} /> Imprimir / PDF
-                                    </button>
+                                    {selectedReport.status === 'approved' && (
+                                        <>
+                                            <button
+                                                onClick={handleExportExcel}
+                                                className="px-6 py-3 rounded-2xl border border-emerald-500/30 text-emerald-400 font-bold hover:bg-emerald-500/10 transition-colors flex items-center gap-2 cursor-pointer"
+                                            >
+                                                <FileSpreadsheet size={20} /> Excel
+                                            </button>
+                                            <button
+                                                onClick={() => { console.log('Print clicked'); handlePrint(); }}
+                                                className="px-6 py-3 rounded-2xl border border-slate-700 text-slate-300 font-bold hover:bg-slate-800 transition-colors flex items-center gap-2 cursor-pointer"
+                                            >
+                                                <Printer size={20} /> Imprimir / PDF
+                                            </button>
+                                        </>
+                                    )}
 
-                                    {selectedReport.status !== 'approved' ? (
+                                    {selectedReport.status === 'modification_requested' ? (
+                                        <>
+                                            <button
+                                                onClick={() => {
+                                                    setRejectNote('');
+                                                    setActionModal({ isOpen: true, type: 'reject' });
+                                                }}
+                                                className="px-6 py-3 rounded-2xl border border-red-500/30 text-red-400 font-bold hover:bg-red-500/10 transition-colors flex items-center gap-2 cursor-pointer relative z-50"
+                                            >
+                                                <XCircle size={20} /> Denegar Solicitud
+                                            </button>
+                                            <button
+                                                onClick={() => setActionModal({ isOpen: true, type: 'unlock' })}
+                                                className="px-8 py-3 rounded-2xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20 flex items-center gap-2 cursor-pointer relative z-50"
+                                            >
+                                                <LockOpen size={20} /> Permitir Modificación
+                                            </button>
+                                        </>
+                                    ) : selectedReport.status !== 'approved' ? (
                                         <>
                                             <button
                                                 onClick={(e) => {
@@ -732,6 +774,7 @@ const IncentivesSupervisor = () => {
                                         <thead>
                                             <tr className="border-b border-slate-800 text-slate-400 text-[10px] uppercase tracking-wider print:text-black print:border-black">
                                                 <th className="p-4 font-bold">Empleado</th>
+                                                <th className="p-4 font-bold text-center">Bajas</th>
                                                 <th className="p-4 font-bold text-center">Incentivo<br />Base</th>
                                                 <th className="p-4 font-bold text-center">Ajustes<br />Extra</th>
                                                 <th className="p-4 font-bold text-center bg-slate-800/30 rounded-t-xl">Microprestamos<br /><span className="text-[9px] opacity-70">(Cap / Meca)</span></th>
@@ -753,6 +796,15 @@ const IncentivesSupervisor = () => {
                                                     <tr key={item.employeeId} className="group hover:bg-slate-800/30 transition-colors print:hover:bg-transparent text-sm">
                                                         <td className="p-4">
                                                             <p className="font-bold text-white print:text-black">{item.employeeName}</p>
+                                                        </td>
+                                                        <td className="p-4 text-center">
+                                                            {(item.sickDays || 0) > 0 ? (
+                                                                <span className="inline-block px-2 py-0.5 bg-rose-500/10 text-rose-400 rounded-md text-xs font-bold border border-rose-500/20 print:border-black print:text-black">
+                                                                    {item.sickDays}d
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-slate-600 text-xs">-</span>
+                                                            )}
                                                         </td>
                                                         <td className="p-4 text-center">
                                                             <span className="font-mono text-slate-300 print:text-black">{item.baseAmount.toFixed(2)}€</span>
@@ -828,28 +880,70 @@ const IncentivesSupervisor = () => {
                 </div>
             </div>
 
-            {/* Action Modal (Approve/Reject) */}
+            {/* Action Modal (Approve/Reject including Modification Requests) */}
             {actionModal.isOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm print:hidden">
                     <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
                         <div className="flex flex-col items-center text-center">
+
+                            {/* Icon Based on Type */}
                             <div className={clsx("w-16 h-16 rounded-full flex items-center justify-center mb-6",
-                                actionModal.type === 'approve' ? "bg-emerald-500/10 text-emerald-500" : "bg-red-500/10 text-red-500"
+                                actionModal.type === 'approve' ? "bg-emerald-500/10 text-emerald-500" :
+                                    actionModal.type === 'unlock' ? "bg-blue-500/10 text-blue-500" :
+                                        "bg-red-500/10 text-red-500"
                             )}>
-                                {actionModal.type === 'approve' ? <CheckCircle size={32} /> : <XCircle size={32} />}
+                                {actionModal.type === 'approve' ? <CheckCircle size={32} /> :
+                                    actionModal.type === 'unlock' ? <LockOpen size={32} /> :
+                                        <XCircle size={32} />}
                             </div>
 
+                            {/* Title */}
                             <h3 className="text-2xl font-black text-white mb-2">
-                                {actionModal.type === 'approve' ? '¿Aprobar Incentivos?' : 'Solicitar Cambios'}
+                                {actionModal.type === 'approve' ? '¿Aprobar Incentivos?' :
+                                    actionModal.type === 'unlock' ? '¿Permitir Modificación?' :
+                                        selectedReport?.status === 'modification_requested' ? '¿Denegar Solicitud?' :
+                                            'Solicitar Cambios'}
                             </h3>
 
-                            <p className="text-slate-400 mb-6">
-                                {actionModal.type === 'approve'
-                                    ? 'Esta acción aprobará el reporte y lo marcará como listo para contabilidad.'
-                                    : 'Indica los motivos por los que se solicitan cambios en este reporte.'}
-                            </p>
+                            {/* Description Logic */}
+                            <div className="text-slate-400 mb-6">
+                                {actionModal.type === 'approve' && (
+                                    <p>Esta acción aprobará el reporte y lo marcará como listo para contabilidad.</p>
+                                )}
 
-                            {actionModal.type === 'reject' && (
+                                {actionModal.type === 'unlock' && (
+                                    <>
+                                        <p className="mb-4">Vas a desbloquear este reporte para que el gerente realice modificaciones.</p>
+                                        {selectedReport?.managerNotes && (
+                                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 text-left">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Motivo del Gerente:</p>
+                                                <p className="text-white text-sm italic">"{selectedReport.managerNotes}"</p>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {actionModal.type === 'reject' && (
+                                    <>
+                                        {selectedReport?.status === 'modification_requested' ? (
+                                            <>
+                                                <p className="mb-4">Vas a denegar la solicitud de modificación y el reporte permanecerá Aprobado.</p>
+                                                {selectedReport?.managerNotes && (
+                                                    <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 text-left">
+                                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Motivo del Gerente:</p>
+                                                        <p className="text-white text-sm italic">"{selectedReport.managerNotes}"</p>
+                                                    </div>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <p>Indica los motivos por los que se solicitan cambios en este reporte.</p>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+
+                            {/* REJECT NOTE INPUT (Only if NOT 'modification_requested') */}
+                            {actionModal.type === 'reject' && selectedReport?.status !== 'modification_requested' && (
                                 <textarea
                                     value={rejectNote}
                                     onChange={(e) => setRejectNote(e.target.value)}
@@ -870,10 +964,14 @@ const IncentivesSupervisor = () => {
                                     className={clsx("flex-1 py-3 font-bold rounded-xl shadow-lg transition-colors text-white",
                                         actionModal.type === 'approve'
                                             ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/20"
-                                            : "bg-red-600 hover:bg-red-500 shadow-red-500/20"
+                                            : actionModal.type === 'unlock'
+                                                ? "bg-blue-600 hover:bg-blue-500 shadow-blue-500/20"
+                                                : "bg-red-600 hover:bg-red-500 shadow-red-500/20"
                                     )}
                                 >
-                                    {actionModal.type === 'approve' ? 'Aprobar' : 'Solicitar'}
+                                    {actionModal.type === 'approve' ? 'Aprobar' :
+                                        actionModal.type === 'unlock' ? 'Permitir' :
+                                            selectedReport?.status === 'modification_requested' ? 'Denegar' : 'Solicitar'}
                                 </button>
                             </div>
                         </div>
@@ -940,6 +1038,22 @@ const IncentivesSupervisor = () => {
                         <p className="text-slate-400 text-sm mb-4">Empleado: <span className="text-indigo-400 font-bold">{editingItem.item.employeeName}</span></p>
 
                         <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                            {/* Base Incentive */}
+                            <div className="mb-6">
+                                <h4 className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">Incentivo Base</h4>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center gap-2">
+                                    <span className="text-slate-500 font-bold">$</span>
+                                    <input
+                                        type="number"
+                                        value={editingItem.item.baseAmount}
+                                        onChange={(e) => setEditingItem(prev => prev ? { ...prev, item: { ...prev.item, baseAmount: parseFloat(e.target.value) || 0 } } : null)}
+                                        className="bg-transparent text-white font-mono text-lg outline-none w-full"
+                                        placeholder="0.00"
+                                    />
+                                    <span className="text-slate-500 text-sm">EUR</span>
+                                </div>
+                            </div>
+
                             {/* Pluses */}
                             <div>
                                 <h4 className="text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2 flex justify-between items-center">
@@ -1027,6 +1141,66 @@ const IncentivesSupervisor = () => {
                     </div>
                 </div>
             )}
+
+            {/* Print Styles */}
+            <style>{`
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 5mm;
+                    }
+                    body {
+                        background: white !important;
+                        color: black !important;
+                        -webkit-print-color-adjust: exact;
+                        print-color-adjust: exact;
+                        zoom: 0.85; /* Scale down to fit all columns */
+                    }
+                    /* Hide unnecessary elements */
+                    .print\\:hidden, aside, nav, button, .sticky, .fixed, .no-print {
+                        display: none !important;
+                    }
+                    /* Expand main content */
+                    .lg\\:col-span-8, .p-8 {
+                        width: 100% !important;
+                        padding: 0 !important;
+                        margin: 0 !important;
+                        border: none !important;
+                        max-width: none !important;
+                    }
+                    /* Reset backgrounds and borders for clean ink usage */
+                    .bg-slate-900\\/40, .bg-slate-950\\/50, .border-slate-800\\/50 {
+                        background: none !important;
+                        border: none !important;
+                        box-shadow: none !important;
+                        backdrop-filter: none !important;
+                    }
+                    /* Typography overrides */
+                    .text-white, .text-slate-200, .text-slate-300, .text-slate-400, .text-slate-500, .text-emerald-400, .text-indigo-400 {
+                        color: black !important;
+                    }
+                    /* Table adjustments */
+                    table {
+                        width: 100% !important;
+                        font-size: 9pt !important;
+                    }
+                    th {
+                        background-color: #f0f0f0 !important;
+                        color: black !important;
+                        border-bottom: 2px solid black !important;
+                    }
+                    td {
+                        border-bottom: 1px solid #ddd !important;
+                        padding: 4px !important;
+                    }
+                    /* Specific overrides for badges */
+                    .bg-indigo-500\\/20, .bg-emerald-500\\/20 {
+                        border: 1px solid black !important;
+                        background: transparent !important;
+                        padding: 2px 6px !important;
+                    }
+                }
+            `}</style>
         </div>
     );
 };

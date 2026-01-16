@@ -6,7 +6,7 @@ import {
     Users, Calendar, Clock, AlertTriangle, Check, X, Bell, TrendingUp,
     ArrowUpRight, Activity, Search, ChevronRight, ChevronLeft,
     Coins, FileText, UserX, AlertCircle, LayoutGrid, LayoutList,
-    Zap, UserCheck, CheckSquare, Plane, Trophy, Star
+    Zap, UserCheck, CheckSquare, Plane, Trophy, Medal
 } from 'lucide-react';
 import { FilterSelect } from '../components/FilterSelect';
 import AnnualPlanModal from '../components/AnnualPlanModal';
@@ -16,6 +16,10 @@ import { clsx } from 'clsx';
 const DashboardPage: React.FC = () => {
     const { user } = useAuth();
 
+    const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+    const [isMicroloansModalOpen, setIsMicroloansModalOpen] = useState(false); // New state for interactivity
+    const [microloansFilterYear, setMicroloansFilterYear] = useState(new Date().getFullYear());
+
     // Redirect to Supervisor Dashboard if admin
     if (user?.role === 'admin') {
         return <SupervisorDashboard />;
@@ -23,7 +27,7 @@ const DashboardPage: React.FC = () => {
 
     const {
         employees, schedules, timeOffRequests, updateHoursDebt, getSettings,
-        hoursDebtLogs, notifications, removeNotification, tasks, updateTaskStatus,
+        hoursDebtLogs, notifications, markNotificationAsRead, tasks, updateTaskStatus,
         incentiveReports, updateIncentiveReport, employeeLogs, getManagerNames, iltReports
     } = useStore();
     const { showToast } = useToast();
@@ -41,7 +45,7 @@ const DashboardPage: React.FC = () => {
     const [isAnnualPlanOpen, setIsAnnualPlanOpen] = useState(false);
     const [debtTab, setDebtTab] = useState<'balance' | 'adjust' | 'pay' | 'history'>('balance');
     const [selectedDebtMonth, setSelectedDebtMonth] = useState<number | 'all'>('all');
-    const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+
     const [alertState, setAlertState] = useState<Record<string, number>>(() => {
         try {
             return JSON.parse(localStorage.getItem('dashboard_dismissed_alerts') || '{}');
@@ -88,7 +92,7 @@ const DashboardPage: React.FC = () => {
         return options;
     };
 
-    const handlePayIncentives = () => {
+    const handlePayIncentives = async () => {
         if (!user) return;
         const { employeeId, amount, targetMonth } = payIncentivesData;
         const qty = parseFloat(amount);
@@ -110,7 +114,12 @@ const DashboardPage: React.FC = () => {
             return;
         }
 
-        updateHoursDebt(employeeId, -qty, 'Transferencia a Incentivos');
+        try {
+            await updateHoursDebt(employeeId, -qty, 'Transferencia a Incentivos');
+        } catch (error) {
+            showToast('Error al actualizar la bolsa de horas', 'error');
+            return;
+        }
 
         let report = incentiveReports.find(r => r.establishmentId === user.establishmentId && r.month === targetMonth);
 
@@ -167,7 +176,7 @@ const DashboardPage: React.FC = () => {
         return Math.max(0, Math.min(100, Math.round(score)));
     };
 
-    const handleAddManualDebt = () => {
+    const handleAddManualDebt = async () => {
         if (!selectedDebtEmp) {
             showToast('Debes seleccionar un empleado', 'error');
             return;
@@ -181,11 +190,15 @@ const DashboardPage: React.FC = () => {
             return;
         }
 
-        updateHoursDebt(selectedDebtEmp, Number(manualDebtAmount), manualDebtReason);
-        setManualDebtAmount('');
-        setManualDebtReason('');
-        setSelectedDebtEmp('');
-        showToast('Ajuste de horas registrado', 'success');
+        try {
+            await updateHoursDebt(selectedDebtEmp, Number(manualDebtAmount), manualDebtReason);
+            setManualDebtAmount('');
+            setManualDebtReason('');
+            setSelectedDebtEmp('');
+            showToast('Ajuste de horas registrado', 'success');
+        } catch (error) {
+            showToast('Error al registrar las horas', 'error');
+        }
     };
 
     if (!user) return null;
@@ -241,6 +254,7 @@ const DashboardPage: React.FC = () => {
 
     const totalContractedHours = myEmployees.reduce((acc, e) => acc + e.weeklyHours, 0);
 
+    // Filter out inactive employees from total debt calculation and top debtors list
     const totalDebt = useMemo(() =>
         myEmployees.filter(e => e.active).reduce((acc, e) => acc + (e.hoursDebt || 0), 0)
         , [myEmployees]);
@@ -344,17 +358,24 @@ const DashboardPage: React.FC = () => {
     }, [timeOffRequests, myEmployees, currentWeekStart]);
 
     const weeklyStats = useMemo(() => {
-        return [...schedules]
+        const uniqueSchedules = new Map<string, (typeof schedules)[0]>();
+        [...schedules]
             .filter(s => s.establishmentId === user.establishmentId)
             .sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate))
-            .map(s => {
-                const worked = s.shifts
-                    .filter(sh => sh.type === 'morning' || sh.type === 'afternoon' || sh.type === 'split')
-                    .reduce((acc, sh) => acc + (sh.type === 'split' ? 8 : 4), 0);
-                const contracted = totalContractedHours;
-                const coverage = contracted > 0 ? (worked / contracted) * 100 : 0;
-                return { label: s.weekStartDate, worked, contracted, coverage };
+            .forEach(s => {
+                if (!uniqueSchedules.has(s.weekStartDate)) {
+                    uniqueSchedules.set(s.weekStartDate, s);
+                }
             });
+
+        return Array.from(uniqueSchedules.values()).map(s => {
+            const worked = s.shifts
+                .filter(sh => sh.type === 'morning' || sh.type === 'afternoon' || sh.type === 'split')
+                .reduce((acc, sh) => acc + (sh.type === 'split' ? 8 : 4), 0);
+            const contracted = totalContractedHours;
+            const coverage = contracted > 0 ? (worked / contracted) * 100 : 0;
+            return { label: s.weekStartDate, worked, contracted, coverage };
+        });
     }, [schedules, user.establishmentId, totalContractedHours]);
 
     const pastWeeklyStats = useMemo(() =>
@@ -414,6 +435,7 @@ const DashboardPage: React.FC = () => {
 
         const prevMonthEmployeePerformance = (prevReport?.items || [])
             .map(item => ({
+                employeeId: item.employeeId,
                 name: item.employeeName,
                 count: item.micros_aptacion_qty || 0
             }))
@@ -426,14 +448,14 @@ const DashboardPage: React.FC = () => {
 
         // Annual Data (Current Year)
         const currentYear = new Date().getFullYear();
-        const annualEmployeeCounts: Record<string, { name: string, count: number }> = {};
+        const annualEmployeeCounts: Record<string, { id: string, name: string, count: number }> = {};
 
         incentiveReports
             .filter(r => r.establishmentId === user.establishmentId && r.month.startsWith(`${currentYear}-`))
             .forEach(report => {
                 report.items.forEach(item => {
                     if (!annualEmployeeCounts[item.employeeId]) {
-                        annualEmployeeCounts[item.employeeId] = { name: item.employeeName, count: 0 };
+                        annualEmployeeCounts[item.employeeId] = { id: item.employeeId, name: item.employeeName, count: 0 };
                     }
                     annualEmployeeCounts[item.employeeId].count += (item.micros_aptacion_qty || 0);
                 });
@@ -448,7 +470,7 @@ const DashboardPage: React.FC = () => {
         const history = [];
         for (let i = 0; i < 6; i++) {
             const d = new Date();
-            d.setMonth(d.getMonth() - i);
+            d.setMonth(d.getMonth() - i - 1);
             const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
             const rep = incentiveReports.find(r => r.establishmentId === user.establishmentId && r.month === mStr);
             const total = (rep?.items || []).reduce((acc, item) => acc + (item.micros_aptacion_qty || 0), 0);
@@ -466,6 +488,27 @@ const DashboardPage: React.FC = () => {
             annualRanking
         };
     }, [incentiveReports, user.establishmentId]);
+
+    // Microloans Modal Data
+    const microloansModalData = useMemo(() => {
+        const months = Array.from({ length: 12 }, (_, i) => i);
+        return months.map(monthIndex => {
+            const d = new Date(microloansFilterYear, monthIndex, 1);
+            const mStr = `${microloansFilterYear}-${String(monthIndex + 1).padStart(2, '0')}`;
+
+            const report = incentiveReports.find(r =>
+                r.month === mStr && r.establishmentId === user.establishmentId
+            );
+
+            const total = (report?.items || []).reduce((sum, item) => sum + (item.micros_aptacion_qty || 0), 0);
+
+            return {
+                label: d.toLocaleDateString('es-ES', { month: 'long' }),
+                total
+            };
+        });
+    }, [incentiveReports, user.establishmentId, microloansFilterYear]);
+
 
     const [dashboardYear, setDashboardYear] = useState(new Date().getFullYear());
     const [saturdaysYear, setSaturdaysYear] = useState(new Date().getFullYear());
@@ -528,7 +571,7 @@ const DashboardPage: React.FC = () => {
                     }
                 });
             }
-            if (Math.abs(emp.hoursDebt) > 20) {
+            if (new Date().getDay() === 3 && Math.abs(emp.hoursDebt) > 30) {
                 alerts.push({ id: `debt_${emp.id}`, type: 'error', message: `${emp.name} tiene déuda horaria de ${emp.hoursDebt}h`, icon: TrendingUp, isSystem: true });
             }
         });
@@ -545,14 +588,36 @@ const DashboardPage: React.FC = () => {
             }
         });
 
-        // Unpublished Schedules
-        const unpublished = schedules.filter(s => s.establishmentId === user.establishmentId && s.status !== 'published' && s.weekStartDate <= currentWeekStart);
-        unpublished.forEach(s => {
-            alerts.push({ id: `unpub_${s.id}`, type: 'warning', message: `Pendiente publicar horario (Semana ${new Date(s.weekStartDate).toLocaleDateString()})`, icon: AlertTriangle, isSystem: true });
-        });
+        // Schedule Warning Logic: Only Friday(5), Saturday(6), Sunday(0) for Next Week
+        const today = new Date();
+        const dayOfWeek = today.getDay();
+        if (dayOfWeek === 5 || dayOfWeek === 6 || dayOfWeek === 0) {
+            const nextWeekDate = new Date(currentWeekStart);
+            nextWeekDate.setDate(nextWeekDate.getDate() + 7);
+            const nextWeekStr = nextWeekDate.toISOString().split('T')[0];
+
+            const nextWeekSchedule = schedules.find(s => s.establishmentId === user.establishmentId && s.weekStartDate === nextWeekStr);
+
+            // Alert if NO schedule found OR schedule is not in a "safe" state (published or pending approval)
+            // Safe states: status === 'published' OR approvalStatus === 'pending'
+            // Unsafe states: status === 'draft' (and not pending) OR approvalStatus === 'rejected'
+
+            const isPendingApproval = nextWeekSchedule?.approvalStatus === 'pending';
+            const isPublished = nextWeekSchedule?.status === 'published';
+
+            if (!nextWeekSchedule || (!isPublished && !isPendingApproval)) {
+                alerts.push({
+                    id: `sched_needed_${nextWeekStr}`,
+                    type: 'warning',
+                    message: `Pendiente realizar horario (Semana ${nextWeekDate.toLocaleDateString()})`,
+                    icon: Calendar,
+                    isSystem: true
+                });
+            }
+        }
 
         // ILT Report Alert (4th-10th)
-        const today = new Date();
+        // const today = new Date(); // Moved up
         const dayOfMonth = today.getDate();
         if (dayOfMonth >= 20 && dayOfMonth <= 30) {
             const currentMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
@@ -581,8 +646,20 @@ const DashboardPage: React.FC = () => {
 
     const pendingTasks = useMemo(() => {
         if (!user?.establishmentId) return [];
+        // Use local date to avoid timezone issues (ISOString is UTC)
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const today = `${year}-${month}-${day}`;
+
         return tasks.filter(t => {
             if (t.isArchived) return false;
+
+            // Check Start Date (Filter out future tasks)
+            const taskStart = t.startDate || t.date;
+            if (taskStart && taskStart > today) return false;
+
             const isAssigned = t.targetStores === 'all' || t.targetStores.includes(user.establishmentId);
             if (!isAssigned) return false;
             const status = t.status[user.establishmentId]?.status || 'pending';
@@ -673,7 +750,7 @@ const DashboardPage: React.FC = () => {
                                                     </div>
                                                 ) : (
                                                     <button
-                                                        onClick={() => alert.contextNotifId && removeNotification(alert.contextNotifId)}
+                                                        onClick={() => alert.contextNotifId && markNotificationAsRead(alert.contextNotifId)}
                                                         className="text-xs text-indigo-500 font-bold hover:bg-indigo-50 px-2 py-1 rounded-lg transition-colors"
                                                     >
                                                         Marcar leído
@@ -854,127 +931,193 @@ const DashboardPage: React.FC = () => {
                     },
                     {
                         id: 'microloans',
-                        label: 'Captación Clientes',
+                        label: 'MICROCRÉDITOS',
                         val: `${microloansData.prevMonthData.total}`,
                         icon: Coins,
-                        color: 'text-sky-600',
-                        bg: 'bg-sky-50',
-                        border: 'border-sky-100/50',
-                        onClick: undefined, // Or open incentives modal?
-                        extra: (
-                            <div className="mt-6 flex-1 h-full min-h-[160px]">
-                                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
+                        color: 'text-indigo-600',
+                        bg: 'bg-white',
+                        border: 'border-white',
+                        onClick: () => setIsMicroloansModalOpen(true),
 
-                                    {/* 1. MVP Module (Focus on Winner) */}
-                                    <div className="relative bg-gradient-to-br from-indigo-600 via-indigo-500 to-purple-600 rounded-2xl p-4 flex flex-col justify-between shadow-lg shadow-indigo-200 text-white overflow-hidden group">
+                        extra: (
+                            <div className="mt-2 flex-1 h-full min-h-[160px] flex flex-col justify-end">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-full">
+
+                                    {/* 1. MVP Module */}
+                                    <div className="relative bg-gradient-to-br from-indigo-600 via-indigo-500 to-purple-600 rounded-[2rem] p-5 flex flex-col justify-between shadow-lg shadow-indigo-200/50 text-white overflow-hidden group/mvp">
                                         <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
                                         <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-500/20 rounded-full blur-xl -ml-10 -mb-10 pointer-events-none"></div>
 
                                         <div className="relative z-10 flex justify-between items-start">
-                                            <div className="bg-white/20 backdrop-blur-md p-2 rounded-xl border border-white/10">
+                                            <div className="bg-white/20 backdrop-blur-md p-2 rounded-xl border border-white/10 shadow-sm">
                                                 <Trophy size={18} className="text-yellow-300 drop-shadow-sm" />
                                             </div>
-                                            <span className="text-[10px] font-black uppercase tracking-widest bg-white/10 px-2 py-1 rounded-lg border border-white/5">
+                                            <span className="text-[9px] font-black uppercase tracking-widest bg-white/10 px-2.5 py-1 rounded-lg border border-white/5 backdrop-blur-sm">
                                                 {microloansData.prevMonthData.label}
                                             </span>
                                         </div>
 
-                                        <div className="relative z-10 mt-2">
-                                            <p className="text-[10px] font-medium text-indigo-100 uppercase tracking-widest mb-1">MVP del Mes</p>
+                                        <div className="relative z-10 flex-1 flex flex-col justify-end">
+                                            <p className="text-[9px] font-bold text-indigo-100 uppercase tracking-widest mb-1 opacity-80">Ranking del Mes</p>
                                             {microloansData.prevMonthData.ranking.length > 0 ? (
-                                                <div>
-                                                    <p className="text-xl font-black leading-tight mb-0.5 truncate">{microloansData.prevMonthData.ranking[0].name.split(' ')[0]}</p>
-                                                    <div className="flex items-baseline gap-1.5">
-                                                        <span className="text-3xl font-black tracking-tighter text-white">{microloansData.prevMonthData.ranking[0].count}</span>
-                                                        <span className="text-[10px] font-bold text-indigo-200">captaciones</span>
-                                                    </div>
+                                                <div className="flex items-end justify-center gap-2 pb-1">
+                                                    {(() => {
+                                                        const top3 = microloansData.prevMonthData.ranking.slice(0, 3);
+                                                        const podiumOrder = [top3[1], top3[0], top3[2]].filter(Boolean);
+
+                                                        return podiumOrder.map((emp) => {
+                                                            const employeeData = myEmployees.find(e => e.id === emp.employeeId);
+                                                            const initials = employeeData?.initials || emp.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+
+                                                            let rank = 0;
+                                                            let height = 'h-16'; // Increased Base Height
+                                                            let color = 'bg-white/10';
+                                                            let shadow = '';
+                                                            let medalColor = 'text-white/40';
+
+                                                            if (emp === top3[0]) {
+                                                                rank = 1;
+                                                                height = 'h-24'; // Taller for winner
+                                                                color = 'bg-gradient-to-t from-yellow-400/30 to-yellow-300/10 border border-yellow-300/30';
+                                                                shadow = 'shadow-[0_0_25px_rgba(253,224,71,0.25)]';
+                                                                medalColor = 'text-yellow-300';
+                                                            } else if (emp === top3[1]) {
+                                                                rank = 2;
+                                                                height = 'h-16';
+                                                                color = 'bg-white/15 border border-white/10';
+                                                                medalColor = 'text-slate-300';
+                                                            } else {
+                                                                rank = 3;
+                                                                height = 'h-12';
+                                                                color = 'bg-white/5 border border-white/5';
+                                                                medalColor = 'text-orange-300/80';
+                                                            }
+
+                                                            return (
+                                                                <div key={emp.employeeId || emp.name} className="flex flex-col items-center w-1/3 group/item">
+                                                                    <div className="mb-2 text-center relative">
+                                                                        {/* Medal Icon floating above */}
+                                                                        <div className={`absolute -top-7 left-1/2 -translate-x-1/2 ${medalColor} drop-shadow-sm transition-transform group-hover/item:scale-110 duration-300`}>
+                                                                            <Medal size={emp === top3[0] ? 24 : 18} />
+                                                                        </div>
+
+                                                                        <span className="block text-2xl font-black text-white tracking-tighter mb-0.5">{emp.count}</span>
+                                                                        <span className="block text-base font-black text-indigo-100 opacity-90 tracking-wide">{initials}</span>
+                                                                    </div>
+                                                                    <div className={`w-full ${height} ${color} rounded-t-xl relative flex items-start justify-center pt-2 ${shadow} backdrop-blur-md transition-all duration-300 group-hover/item:bg-white/20`}>
+                                                                        <span className={`text-[10px] font-black text-white/30`}>{rank}</span>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        });
+                                                    })()}
                                                 </div>
                                             ) : (
-                                                <p className="text-sm italic text-indigo-200/70">Sin rey este mes</p>
+                                                <p className="text-sm italic text-indigo-200/70">Sin datos</p>
                                             )}
                                         </div>
                                     </div>
 
-                                    {/* 2. Annual Top 3 (List) */}
-                                    <div className="bg-white rounded-2xl border border-slate-100 p-4 flex flex-col shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
-                                        <div className="flex items-center gap-2 mb-3 text-amber-500 relative z-10">
-                                            <Star size={14} className="fill-amber-500" />
+                                    {/* 2. Annual Top 3 (Podium) */}
+                                    <div className="bg-white rounded-[2rem] p-5 flex flex-col justify-between shadow-sm border border-slate-100 group/ranking hover:shadow-md transition-all duration-300 relative overflow-hidden">
+                                        <div className="absolute -right-10 -top-10 w-32 h-32 bg-amber-50 rounded-full blur-3xl opacity-50 pointer-events-none group-hover/ranking:opacity-80 transition-opacity"></div>
+
+                                        <div className="flex items-center gap-2 mb-4 relative z-10">
+                                            <Trophy size={14} className="fill-amber-400 text-amber-400" />
                                             <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Líderes Anuales</span>
                                         </div>
 
-                                        <div className="flex-1 flex flex-col gap-2 relative z-10">
-                                            {microloansData.annualRanking.length > 0 ? microloansData.annualRanking.slice(0, 3).map((emp, i) => (
-                                                <div key={i} className="flex items-center justify-between p-1.5 rounded-lg hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className={clsx(
-                                                            "w-5 h-5 rounded-md flex items-center justify-center text-[9px] font-black shadow-sm",
-                                                            i === 0 ? "bg-amber-100 text-amber-700" :
-                                                                i === 1 ? "bg-slate-100 text-slate-600" :
-                                                                    "bg-orange-50 text-orange-600"
-                                                        )}>{i + 1}º</div>
-                                                        <span className="text-xs font-bold text-slate-700 truncate max-w-[80px]">{emp.name.split(' ')[0]}</span>
-                                                    </div>
-                                                    <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded ml-2">{emp.count}</span>
-                                                </div>
-                                            )) : (
-                                                <div className="flex-1 flex items-center justify-center text-slate-300 text-xs italic">
-                                                    Ranking vacío
-                                                </div>
+                                        <div className="flex-1 flex items-end justify-center gap-2 relative z-10 pb-2">
+                                            {microloansData.annualRanking.length > 0 ? (() => {
+                                                const top3 = microloansData.annualRanking.slice(0, 3);
+                                                // Podium order: 2nd, 1st, 3rd
+                                                const podiumOrder = [top3[1], top3[0], top3[2]].filter(Boolean);
+
+                                                return podiumOrder.map((emp) => {
+                                                    // Determine Rank based on original index in top3
+                                                    // if emp === top3[0] -> Rank 1 (Gold)
+                                                    // if emp === top3[1] -> Rank 2 (Silver)
+                                                    // if emp === top3[2] -> Rank 3 (Bronze)
+                                                    let rank = 0;
+                                                    let height = 'h-16';
+                                                    let color = 'bg-slate-200';
+                                                    let shadow = '';
+
+                                                    if (emp === top3[0]) {
+                                                        rank = 1;
+                                                        height = 'h-24';
+                                                        color = 'bg-gradient-to-t from-amber-400 to-amber-300';
+                                                        shadow = 'shadow-[0_0_15px_rgba(251,191,36,0.4)]';
+                                                    } else if (emp === top3[1]) {
+                                                        rank = 2;
+                                                        height = 'h-20';
+                                                        color = 'bg-gradient-to-t from-slate-300 to-slate-200';
+                                                    } else {
+                                                        rank = 3;
+                                                        height = 'h-14';
+                                                        color = 'bg-gradient-to-t from-orange-300 to-orange-200';
+                                                    }
+
+                                                    return (
+                                                        <div key={emp.id} className="flex flex-col items-center group/podium w-1/3">
+                                                            <div className="mb-2 text-center transition-transform group-hover/podium:-translate-y-1">
+                                                                <span className="block text-[10px] font-bold text-slate-600 truncate max-w-[60px] mx-auto">{emp.name.split(' ')[0]}</span>
+                                                                <span className="block text-xs font-black text-slate-800">{emp.count}</span>
+                                                            </div>
+                                                            <div className={`w-full ${height} ${color} rounded-t-lg relative flex items-start justify-center pt-2 ${shadow} transition-all duration-300`}>
+                                                                <span className={`text-[10px] font-black text-white drop-shadow-sm opacity-80`}>{rank}</span>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                });
+                                            })() : (
+                                                <div className="flex-1 flex items-center justify-center text-slate-300 text-xs italic">Ranking vacío</div>
                                             )}
                                         </div>
-                                        {/* Bg decoration */}
-                                        <div className="absolute -bottom-6 -right-6 w-24 h-24 bg-amber-50 rounded-full blur-2xl opacity-50 pointer-events-none"></div>
                                     </div>
 
-                                    {/* 3. Wide Chart (Spans 2 cols) */}
-                                    <div className="lg:col-span-2 bg-slate-50 rounded-2xl p-5 border border-slate-100 flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
-                                        <div className="flex justify-between items-start mb-2 relative z-10">
+                                    {/* 3. Trend Chart */}
+                                    <div className="bg-white rounded-[2rem] p-5 flex flex-col justify-between shadow-sm border border-slate-100 group/trend hover:shadow-md transition-all duration-300">
+                                        <div className="flex justify-between items-start mb-2">
                                             <div>
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-2">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1.5">
                                                     <TrendingUp size={12} /> Tendencia 6 Meses
                                                 </p>
                                                 <div className="flex items-baseline gap-2">
                                                     <span className="text-3xl font-black text-slate-800 tracking-tighter">
                                                         {microloansData.history.reduce((a, b) => a + b.total, 0)}
                                                     </span>
-                                                    <span className="text-[10px] font-bold text-slate-400">total acumulado</span>
+                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-normal">total acumulado</span>
                                                 </div>
                                             </div>
-                                            {/* Visual Indicator */}
-                                            <div className="hidden sm:flex bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm items-center gap-2">
+                                            <div className="bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 flex items-center gap-1.5">
                                                 <div className="flex -space-x-1">
-                                                    <div className="w-2 h-4 rounded-full bg-indigo-200"></div>
-                                                    <div className="w-2 h-4 rounded-full bg-indigo-300"></div>
-                                                    <div className="w-2 h-4 rounded-full bg-indigo-500"></div>
+                                                    <div className="w-1.5 h-3 rounded-full bg-indigo-300"></div>
+                                                    <div className="w-1.5 h-3 rounded-full bg-indigo-500"></div>
                                                 </div>
                                                 <span className="text-[9px] font-bold text-slate-500">Objetivo</span>
                                             </div>
                                         </div>
 
-                                        {/* Bars */}
-                                        <div className="relative z-10 flex items-end justify-between gap-4 h-24 mt-2 px-2">
+                                        <div className="flex items-end justify-between gap-3 flex-1 min-h-[120px] px-1">
                                             {microloansData.history.map((h, i) => {
                                                 const max = Math.max(...microloansData.history.map(x => x.total)) || 1;
                                                 const height = Math.max(15, Math.min(100, (h.total / max) * 100));
                                                 return (
-                                                    <div key={i} className="flex flex-col items-center gap-2 flex-1 group/bar h-full justify-end cursor-default relative">
-                                                        <div className="w-full relative flex items-end justify-center h-full">
-                                                            {/* Pill Bar */}
-                                                            <div className="w-full bg-slate-200/50 rounded-full absolute inset-0 -z-10 group-hover/bar:bg-slate-200 transition-colors"></div>
+                                                    <div key={i} className="flex flex-col items-center gap-1.5 flex-1 h-full justify-end group/bar relative">
+                                                        {/* Tooltip on Hover */}
+                                                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                                                            {h.total}
+                                                        </div>
+                                                        <div className="w-full relative flex items-end justify-center h-full rounded-t-lg bg-slate-100 overflow-hidden">
                                                             <div
-                                                                className="w-full max-w-[24px] rounded-full bg-gradient-to-t from-indigo-500 to-sky-400 group-hover/bar:from-indigo-600 group-hover/bar:to-purple-500 transition-all duration-300 shadow-sm group-hover/bar:shadow-indigo-200/50"
+                                                                className="w-full absolute bottom-0 bg-gradient-to-t from-indigo-500 to-sky-400 group-hover/bar:from-indigo-600 group-hover/bar:to-purple-500 transition-all duration-500 rounded-t-lg shadow-sm"
                                                                 style={{ height: `${height}%` }}
                                                             ></div>
-
-                                                            {/* Tooltip */}
-                                                            <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-2 py-1 rounded-lg text-[10px] font-bold opacity-0 group-hover/bar:opacity-100 transition-all shadow-xl transform translate-y-2 group-hover/bar:translate-y-0 duration-200 pointer-events-none whitespace-nowrap z-30">
-                                                                {h.total}
-                                                                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45"></div>
-                                                            </div>
                                                         </div>
-                                                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider group-hover/bar:text-indigo-600 transition-colors">{h.label.substring(0, 3)}</span>
+                                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">{h.label.substring(0, 3)}</span>
                                                     </div>
-                                                );
+                                                )
                                             })}
                                         </div>
                                     </div>
@@ -1005,29 +1148,43 @@ const DashboardPage: React.FC = () => {
                             stat.bg
                         )}></div>
 
-                        <div className="flex items-center gap-4 mb-2 pt-1 relative z-10">
-                            <div className={clsx(
-                                "p-3 rounded-2xl group-hover:scale-110 transition-transform duration-500 shadow-sm",
-                                stat.bg, stat.color
-                            )}>
-                                <stat.icon size={22} strokeWidth={2.5} />
+                        {stat.id === 'microloans' ? (
+                            <div className="flex items-center gap-3 py-1">
+                                <div className={clsx(
+                                    "p-2.5 rounded-xl transition-all duration-500 shadow-sm flex items-center justify-center bg-sky-50 text-sky-600 group-hover:bg-sky-500 group-hover:text-white"
+                                )}>
+                                    <stat.icon size={22} strokeWidth={2.5} />
+                                </div>
+                                <h2 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-600 via-indigo-600 to-purple-600 tracking-tighter drop-shadow-sm animate-in zoom-in-50 duration-500 origin-left">
+                                    MICROCRÉDITOS
+                                </h2>
                             </div>
-                            <div className="flex flex-col min-w-0">
-                                <p className="text-3xl font-black text-slate-900 tracking-tighter leading-none mb-1 truncate">
-                                    {stat.val}
-                                </p>
-                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
-                                    <span className={clsx("w-1 h-3 rounded-full", stat.color.replace('text-', 'bg-'))}></span>
-                                    {stat.label}
-                                </p>
+                        ) : (
+                            <div className="flex items-center gap-4">
+                                <div className={clsx(
+                                    "p-3 rounded-2xl group-hover:scale-110 transition-transform duration-500 shadow-sm",
+                                    stat.bg, stat.color
+                                )}>
+                                    <stat.icon size={22} strokeWidth={2.5} />
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                    <p className="text-3xl font-black text-slate-900 tracking-tighter leading-none mb-1 truncate">
+                                        {stat.val}
+                                    </p>
+                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
+                                        <span className={clsx("w-1 h-3 rounded-full", stat.color.replace('text-', 'bg-'))}></span>
+                                        {stat.label}
+                                    </p>
+                                </div>
                             </div>
-                        </div>
+                        )}
 
                         <div className="flex-1 relative z-10">
                             {stat.extra}
                         </div>
                     </div>
-                ))}
+                ))
+                }
             </div >
 
             {/* MAIN CONTENT GRID */}
@@ -1104,7 +1261,7 @@ const DashboardPage: React.FC = () => {
 
                         {debtTab === 'balance' && (
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in slide-in-from-left-4 duration-300">
-                                {myEmployees.map((emp) => (
+                                {myEmployees.filter(e => e.active).map((emp) => (
                                     <div key={emp.id} className="p-5 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col items-center justify-center gap-1 group hover:border-indigo-200 transition-colors cursor-default">
                                         <p className="text-sm font-black uppercase text-slate-500 tracking-widest mb-1">
                                             {emp.initials || emp.name.split(' ').map(n => n[0]).join('').substring(0, 3)}
@@ -1123,7 +1280,7 @@ const DashboardPage: React.FC = () => {
                                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                                     <div className="md:col-span-1">
                                         <FilterSelect
-                                            options={[{ value: '', label: 'Seleccionar...' }, ...myEmployees.map(e => ({ value: e.id, label: e.name }))]}
+                                            options={[{ value: '', label: 'Seleccionar...' }, ...myEmployees.filter(e => e.active).map(e => ({ value: e.id, label: e.name }))]}
                                             value={selectedDebtEmp || ''}
                                             onChange={setSelectedDebtEmp}
                                             placeholder="Empleado"
@@ -1273,95 +1430,137 @@ const DashboardPage: React.FC = () => {
                         )}
                     </div>
 
-                    {/* SÁBADOS LIBRES PANEL - Compact Redesign */}
-                    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-5 flex flex-col h-fit">
-                        <div className="flex justify-between items-center mb-4">
-                            <div className="flex items-center gap-2">
-                                <div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600">
-                                    <LayoutGrid size={18} />
+                    {/* SÁBADOS LIBRES PANEL - Matrix Redesign */}
+                    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6 flex flex-col h-fit overflow-hidden">
+                        <div className="flex justify-between items-center mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+                                    <LayoutGrid size={20} />
                                 </div>
-                                <h3 className="font-bold text-base text-slate-800">Sábados Libres</h3>
+                                <div>
+                                    <h3 className="font-bold text-lg text-slate-800 leading-tight">Sábados Libres</h3>
+                                    <p className="text-xs text-slate-400 font-medium">Conteo anual excluyendo vacaciones y bajas</p>
+                                </div>
                             </div>
-                            <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-100">
-                                <button onClick={() => setSaturdaysYear(y => y - 1)} className="p-1 hover:bg-white hover:shadow-sm rounded-md transition-all text-slate-400 hover:text-indigo-600">
-                                    <ChevronLeft size={14} />
+                            <div className="flex items-center gap-1 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+                                <button onClick={() => setSaturdaysYear(y => y - 1)} className="p-1.5 hover:bg-white hover:shadow-sm rounded-lg transition-all text-slate-400 hover:text-indigo-600">
+                                    <ChevronLeft size={16} />
                                 </button>
-                                <span className="text-[10px] font-black text-slate-600 w-8 text-center">{saturdaysYear}</span>
-                                <button onClick={() => setSaturdaysYear(y => y + 1)} className="p-1 hover:bg-white hover:shadow-sm rounded-md transition-all text-slate-400 hover:text-indigo-600">
-                                    <ChevronRight size={14} />
+                                <span className="text-sm font-black text-slate-700 w-12 text-center">{saturdaysYear}</span>
+                                <button onClick={() => setSaturdaysYear(y => y + 1)} className="p-1.5 hover:bg-white hover:shadow-sm rounded-lg transition-all text-slate-400 hover:text-indigo-600">
+                                    <ChevronRight size={16} />
                                 </button>
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            {myEmployees.filter(e => e.active).map(emp => {
-                                const monthlyCounts = Array.from({ length: 12 }, (_, monthIndex) => {
-                                    const daysInMonth = new Date(saturdaysYear, monthIndex + 1, 0).getDate();
-                                    let count = 0;
-                                    for (let d = 1; d <= daysInMonth; d++) {
-                                        const date = new Date(saturdaysYear, monthIndex, d);
-                                        if (date.getDay() === 6) {
-                                            const dateStr = date.toISOString().split('T')[0];
-                                            const schedule = schedules.find(s => s.establishmentId === user.establishmentId && s.status === 'published' &&
-                                                dateStr >= s.weekStartDate && dateStr <= new Date(new Date(s.weekStartDate).getTime() + 6 * 86400000).toISOString().split('T')[0]);
+                        <div className="relative overflow-x-auto custom-scrollbar pb-2">
+                            <table className="w-full text-left border-collapse min-w-[800px]">
+                                <thead>
+                                    <tr>
+                                        <th className="sticky left-0 z-20 bg-white p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 min-w-[200px]">
+                                            Empleado
+                                        </th>
+                                        {Array.from({ length: 12 }).map((_, i) => (
+                                            <th key={i} className="p-2 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-center w-[calc((100%-250px)/12)]">
+                                                {new Date(2024, i).toLocaleDateString('es-ES', { month: 'short' }).replace('.', '')}
+                                            </th>
+                                        ))}
+                                        <th className="p-3 text-[10px] font-black text-slate-900 uppercase tracking-widest border-b border-slate-100 text-center w-[50px] bg-slate-50">
+                                            Total
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {myEmployees.filter(e => e.active).map(emp => {
+                                        let empTotal = 0;
+                                        const monthlyCounts = Array.from({ length: 12 }, (_, monthIndex) => {
+                                            const daysInMonth = new Date(saturdaysYear, monthIndex + 1, 0).getDate();
+                                            let count = 0;
+                                            for (let d = 1; d <= daysInMonth; d++) {
+                                                const date = new Date(saturdaysYear, monthIndex, d);
+                                                if (date.getDay() === 6) { // Saturday
+                                                    // Fix: Construct YYYY-MM-DD using local time components to avoid timezone shifts from toISOString()
+                                                    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-                                            if (schedule) {
-                                                const shift = schedule.shifts.find(s => s.employeeId === emp.id && s.date === dateStr);
-                                                const hasWork = shift && (shift.type === 'morning' || shift.type === 'afternoon' || shift.type === 'split');
+                                                    // 1. Check if Holiday (Global or Calendar)
+                                                    const isHoliday = settings.holidays.some(h => h.date === dateStr);
+                                                    if (isHoliday) continue;
 
-                                                const isAbsent = timeOffRequests.some(r =>
-                                                    r.employeeId === emp.id && r.status !== 'rejected' &&
-                                                    (r.dates.includes(dateStr) || (r.startDate && r.endDate && dateStr >= r.startDate && dateStr <= r.endDate))
-                                                );
+                                                    // 2. Check if Schedule Published
+                                                    const schedule = schedules.find(s => s.establishmentId === user.establishmentId && s.status === 'published' &&
+                                                        dateStr >= s.weekStartDate && dateStr <= new Date(new Date(s.weekStartDate).getTime() + 6 * 86400000).toISOString().split('T')[0]);
 
-                                                if (!hasWork && !isAbsent) count++;
+                                                    if (schedule) {
+                                                        const shift = schedule.shifts.find(s => s.employeeId === emp.id && s.date === dateStr);
+
+                                                        // 3. Shift MUST exist in the schedule to count
+                                                        // If no shift exists, it means the employee was not included in this schedule (e.g. not hired yet), so it shouldn't count.
+                                                        if (!shift) continue;
+
+                                                        // 4. Check for work
+                                                        const hasWork = shift.type === 'morning' || shift.type === 'afternoon' || shift.type === 'split';
+
+                                                        // 5. Check for Absences (Vacation/Sick Leave)
+                                                        const isAbsent = timeOffRequests.some(r =>
+                                                            r.employeeId === emp.id && r.status !== 'rejected' &&
+                                                            (r.dates && r.dates.includes(dateStr) || (r.startDate && r.endDate && dateStr >= r.startDate && dateStr <= r.endDate))
+                                                        );
+
+                                                        // 6. Check if it's explicitly marked as "Free" (Off) in schedule OR just not working and not absent
+                                                        // "Sábado Libre" usually means they were ABLE to work but were given the day off.
+                                                        // Ideally, shift.type === 'off'.
+                                                        // But if no shift exists in a published schedule, it's also effectively off.
+
+                                                        if (!hasWork && !isAbsent) {
+                                                            count++;
+                                                        }
+                                                    }
+                                                }
                                             }
-                                        }
-                                    }
-                                    return count;
-                                });
+                                            empTotal += count;
+                                            return count;
+                                        });
 
-                                const totalFreeSaturdays = monthlyCounts.reduce((a, b) => a + b, 0);
-
-                                return (
-                                    <div key={emp.id} className="bg-slate-50/50 rounded-xl p-3 border border-slate-100 hover:border-indigo-100 transition-colors group">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <div className="flex items-center gap-2">
-                                                <div className="h-6 w-6 rounded-md bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-[10px] shadow-sm">
-                                                    {emp.initials}
-                                                </div>
-                                                <span className="text-xs font-bold text-slate-700">{emp.name}</span>
-                                            </div>
-                                            <div className="bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-md text-[10px] font-black min-w-[20px] text-center border border-indigo-100">
-                                                {totalFreeSaturdays}
-                                            </div>
-                                        </div>
-
-                                        <div className="flex gap-0.5 h-1.5 w-full bg-white rounded-full p-px border border-slate-100">
-                                            {monthlyCounts.map((count, i) => (
-                                                <div
-                                                    key={i}
-                                                    className={clsx(
-                                                        "flex-1 rounded-full transition-all duration-300",
-                                                        count > 0 ? "bg-indigo-500 shadow-sm" : "bg-slate-50"
-                                                    )}
-                                                    title={`${new Date(saturdaysYear, i).toLocaleDateString('es-ES', { month: 'long' })}: ${count} sábados libres`}
-                                                ></div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                                        return (
+                                            <tr key={emp.id} className="group hover:bg-slate-50/50 transition-colors">
+                                                <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50/50 p-3 border-r border-slate-50/50">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="h-8 w-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-[10px] shadow-sm">
+                                                            {emp.initials || emp.name.substring(0, 2).toUpperCase()}
+                                                        </div>
+                                                        <span className="text-xs font-bold text-slate-700 truncate max-w-[150px]">{emp.name}</span>
+                                                    </div>
+                                                </td>
+                                                {monthlyCounts.map((count, i) => (
+                                                    <td key={i} className="p-2 text-center">
+                                                        <span className={clsx(
+                                                            "text-[10px] font-black px-2 py-1 rounded-md transition-all",
+                                                            count > 0 ? "bg-indigo-100 text-indigo-600" : "text-slate-300"
+                                                        )}>
+                                                            {count > 0 ? count : '-'}
+                                                        </span>
+                                                    </td>
+                                                ))}
+                                                <td className="p-3 text-center bg-slate-50/30">
+                                                    <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2 py-1 rounded-lg">
+                                                        {empTotal}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                </div>
+                </div >
 
 
                 {/* RIGHT COL (4) */}
-                <div className="xl:col-span-5 space-y-8">
+                < div className="xl:col-span-5 space-y-8" >
 
                     {/* SICK LEAVE HISTORY WIDGET */}
-                    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6 flex flex-col h-auto min-h-[400px]">
+                    < div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6 flex flex-col h-auto min-h-[400px]" >
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><UserX className="text-rose-500" /> Historial Bajas</h3>
                             <button onClick={() => setIsRequestHistoryOpen(true)} className="text-xs font-bold text-indigo-500 hover:underline">Ver Detalle Completo</button>
@@ -1436,10 +1635,10 @@ const DashboardPage: React.FC = () => {
                                 </table>
                             </div>
                         </div>
-                    </div>
+                    </div >
 
                     {/* VACATIONS WIDGET - Timeline Style */}
-                    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6">
+                    < div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6" >
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><Plane className="text-teal-500" /> Vacaciones</h3>
 
@@ -1473,10 +1672,10 @@ const DashboardPage: React.FC = () => {
                                 </div>
                             ))}
                         </div>
-                    </div>
+                    </div >
 
 
-                </div>
+                </div >
 
                 {/* MODALS RETAINED FOR FUNCTIONALITY */}
                 {
@@ -1616,6 +1815,23 @@ const DashboardPage: React.FC = () => {
                                             {myEmployees.filter(e => e.active).map(emp => {
                                                 const currentYear = dashboardYear;
 
+                                                // approvedWeekStarts is computed once for performance
+                                                const approvedWeekStarts = new Set(
+                                                    schedules
+                                                        .filter(s => s.establishmentId === user.establishmentId && s.approvalStatus === 'approved')
+                                                        .map(s => s.weekStartDate)
+                                                );
+
+                                                const isDateInApprovedWeek = (date: Date) => {
+                                                    const d = new Date(date);
+                                                    const day = d.getDay();
+                                                    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+                                                    const monday = new Date(d);
+                                                    monday.setDate(diff);
+                                                    const mondayStr = monday.toISOString().split('T')[0];
+                                                    return approvedWeekStarts.has(mondayStr);
+                                                };
+
                                                 // Calculation Helpers
                                                 const getDays = (type: 'sick_leave' | 'maternity_paternity', year?: number) => {
                                                     return timeOffRequests
@@ -1623,13 +1839,20 @@ const DashboardPage: React.FC = () => {
                                                         .reduce((acc, req) => {
                                                             let days = 0;
                                                             if (req.dates && req.dates.length > 0) {
-                                                                days = req.dates.filter(d => !year || new Date(d).getFullYear() === year).length;
+                                                                req.dates.forEach(dStr => {
+                                                                    const d = new Date(dStr);
+                                                                    if ((!year || d.getFullYear() === year) && isDateInApprovedWeek(d)) {
+                                                                        days++;
+                                                                    }
+                                                                });
                                                             } else if (req.startDate && req.endDate) {
                                                                 const s = new Date(req.startDate);
                                                                 const e = new Date(req.endDate);
                                                                 // inclusive dates
                                                                 for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-                                                                    if (!year || d.getFullYear() === year) days++;
+                                                                    if ((!year || d.getFullYear() === year) && isDateInApprovedWeek(d)) {
+                                                                        days++;
+                                                                    }
                                                                 }
                                                             }
                                                             return acc + days;
@@ -1642,16 +1865,17 @@ const DashboardPage: React.FC = () => {
                                                         .filter(r => r.employeeId === emp.id && r.type === type)
                                                         .forEach(req => {
                                                             if (req.dates && req.dates.length > 0) {
-                                                                req.dates.forEach(d => {
-                                                                    const date = new Date(d);
-                                                                    if (date.getFullYear() === currentYear) months[date.getMonth()]++;
+                                                                req.dates.forEach(dStr => {
+                                                                    const date = new Date(dStr);
+                                                                    if (date.getFullYear() === currentYear && isDateInApprovedWeek(date)) {
+                                                                        months[date.getMonth()]++;
+                                                                    }
                                                                 });
                                                             } else if (req.startDate && req.endDate) {
                                                                 const s = new Date(req.startDate);
                                                                 const e = new Date(req.endDate);
-                                                                // Ensure valid dates using loop
                                                                 for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-                                                                    if (d.getFullYear() === currentYear) {
+                                                                    if (d.getFullYear() === currentYear && isDateInApprovedWeek(d)) {
                                                                         months[d.getMonth()]++;
                                                                     }
                                                                 }
@@ -1804,7 +2028,7 @@ const DashboardPage: React.FC = () => {
                                 <div className="space-y-4 relative z-10">
                                     <div className="space-y-1">
                                         <FilterSelect
-                                            options={[{ value: '', label: 'Seleccionar...' }, ...myEmployees.map(e => ({ value: e.id, label: `${e.name} (${e.hoursDebt}h)` }))]}
+                                            options={[{ value: '', label: 'Seleccionar...' }, ...myEmployees.filter(e => e.active && e.hoursDebt > 0).map(e => ({ value: e.id, label: `${e.name} (${e.hoursDebt}h)` }))]}
                                             value={payIncentivesData.employeeId}
                                             onChange={val => setPayIncentivesData({ ...payIncentivesData, employeeId: val })}
                                             placeholder="Empleado"
@@ -2225,9 +2449,83 @@ const DashboardPage: React.FC = () => {
                     )
                 }
 
+                {/* Microloans Detail Modal */}
+                {
+                    isMicroloansModalOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md bg-slate-950/80 animate-in fade-in duration-300">
+                            <div className="bg-white w-full max-w-4xl rounded-[2.5rem] border border-slate-100 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+                                {/* Header */}
+                                <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-white">
+                                    <div>
+                                        <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                                            <Coins size={28} className="text-indigo-500" /> Captación de Clientes
+                                        </h3>
+                                        <p className="text-slate-500 font-medium text-sm mt-1">Informe detallado de actividad comercial.</p>
+                                    </div>
+                                    <button onClick={() => setIsMicroloansModalOpen(false)} className="p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl text-slate-400 hover:text-slate-800 transition-colors">
+                                        <X size={20} />
+                                    </button>
+                                </div>
 
-            </div>
-        </div>
+                                {/* Filters */}
+                                <div className="p-6 bg-slate-50 flex gap-4 border-b border-slate-100">
+                                    <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm">
+                                        <Calendar size={16} className="ml-3 text-slate-400" />
+                                        <select
+                                            value={microloansFilterYear}
+                                            onChange={(e) => setMicroloansFilterYear(Number(e.target.value))}
+                                            className="bg-transparent border-none text-slate-700 font-bold text-sm pr-8 focus:ring-0 cursor-pointer outline-none"
+                                        >
+                                            {[2024, 2025, 2026].map(y => <option key={y} value={y} className="bg-white text-slate-900">{y}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Content */}
+                                <div className="p-8 overflow-y-auto custom-scrollbar">
+                                    <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+                                        <table className="w-full text-left">
+                                            <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
+                                                <tr>
+                                                    <th className="p-5">Mes</th>
+                                                    <th className="p-5 text-right w-full">Captaciones</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-50">
+                                                {microloansModalData.map((row, i) => (
+                                                    <tr key={i} className="hover:bg-slate-50 transition-colors group">
+                                                        <td className="p-5 font-bold text-slate-700 capitalize flex items-center gap-3">
+                                                            <span className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500 text-xs font-black group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                                                                {(i + 1).toString().padStart(2, '0')}
+                                                            </span>
+                                                            {row.label}
+                                                        </td>
+                                                        <td className="p-5 text-right">
+                                                            <span className={clsx("text-lg font-black", row.total > 0 ? "text-white" : "text-slate-600")}>
+                                                                {row.total}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                <tr className="bg-sky-500/10">
+                                                    <td className="p-5 font-black text-sky-400 uppercase tracking-wider text-xs">Total Anual</td>
+                                                    <td className="p-5 text-right font-black text-2xl text-sky-400">
+                                                        {microloansModalData.reduce((a, b) => a + b.total, 0)}
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )
+                }
+
+
+
+            </div >
+        </div >
     );
 };
 

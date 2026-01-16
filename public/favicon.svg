@@ -1,0 +1,24 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- House Container -->
+  <path d="M64 10 L118 50 V110 H10 V50 L64 10 Z" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="4" stroke-linejoin="round" />
+  
+  <!-- Person -->
+  <g transform="translate(64, 110)" fill="#7c3aed"> <!-- violet-600 -->
+    <!-- Head -->
+    <circle cx="0" cy="-65" r="16" />
+    
+    <!-- Body & Arms -->
+    <path d="M-22 -42 
+             Q-35 -55 -45 -65 
+             L-34 -76 
+             Q-20 -60 -12 -42 
+             L-12 -20 
+             L12 -20 
+             L12 -42 
+             Q20 -60 34 -76 
+             L45 -65 
+             Q35 -55 22 -42
+             L22 0 
+             L-22 0 Z" />
+  </g>
+</svg>

@@ -18,12 +18,7 @@ const DEFAULT_SETTINGS: Omit<StoreSettings, 'establishmentId'> = {
 
 export const DEFAULT_STORE_NAMES: Record<string, string> = {
     '1': 'Sevilla 1',
-    '2': 'Sevilla 2',
-    '3': 'Malaga 2',
-    '4': 'Cordoba',
-    '5': 'Jerez',
-    '6': 'Malaga 1',
-    '7': 'Granada'
+    '2': 'Sevilla 2'
 };
 
 export const getStoreSettings = (establishmentId: string): StoreSettings => {

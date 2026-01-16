@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { User } from '../types';
+import { auth } from '../firebase';
+import { onAuthStateChanged, signOut, setPersistence, browserSessionPersistence } from 'firebase/auth';
 
 interface AuthContextType {
     user: User | null;
@@ -23,32 +25,64 @@ const MANAGERS: User[] = [
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        const storedUser = localStorage.getItem('saas_schedule_user');
-        if (storedUser) {
-            setUser(JSON.parse(storedUser));
-        }
+        // Set persistence to session mainly
+        setPersistence(auth, browserSessionPersistence)
+            .then(() => {
+                const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+                    if (firebaseUser) {
+                        // Map Firebase User to our App User
+                        // We will store custom claims or just map by email for now
+                        const email = firebaseUser.email || '';
+                        let establishmentId = '';
+
+                        // MAPPING LOGIC (Temporary until custom claims)
+                        if (email.includes('tienda1')) establishmentId = '1';
+                        else if (email.includes('tienda2')) establishmentId = '2';
+                        else if (email.includes('malaga2')) establishmentId = '3';
+                        else if (email.includes('cordoba')) establishmentId = '4';
+                        else if (email.includes('jerez')) establishmentId = '5';
+                        else if (email.includes('malaga1')) establishmentId = '6';
+                        else if (email.includes('granada')) establishmentId = '7';
+                        else if (email.includes('admin')) establishmentId = 'super';
+
+                        const foundUser = MANAGERS.find(u => u.establishmentId === establishmentId);
+                        setUser(foundUser || {
+                            id: firebaseUser.uid,
+                            name: firebaseUser.displayName || 'Usuario',
+                            role: 'manager',
+                            establishmentId,
+                            establishmentName: 'Tienda ' + establishmentId
+                        });
+                    } else {
+                        setUser(null);
+                    }
+                    setIsLoading(false);
+                });
+                return () => unsubscribe();
+            })
+            .catch((error) => {
+                console.error("Auth Persistence Error:", error);
+                setIsLoading(false);
+            });
     }, []);
 
-    const login = (establishmentId: string) => {
-        const foundUser = MANAGERS.find(u => u.establishmentId === establishmentId);
-        if (foundUser) {
-            setUser(foundUser);
-            localStorage.setItem('saas_schedule_user', JSON.stringify(foundUser));
-        }
+    const login = async (_establishmentId: string) => {
+        // This is now purely for interface compat, actual login happens in Login.tsx
+        console.warn("Login should be handled by firebase signInWithEmailAndPassword in Login Page");
     };
 
-    const logout = () => {
+    const logout = async () => {
+        await signOut(auth);
         setUser(null);
         localStorage.removeItem('saas_schedule_user');
     };
 
-    console.log('AuthProvider rendering, user:', user);
-
     return (
         <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>
-            {children}
+            {!isLoading && children}
         </AuthContext.Provider>
     );
 };

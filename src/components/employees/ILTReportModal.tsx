@@ -24,7 +24,7 @@ const ILTReportModal: React.FC<ILTReportModalProps> = ({ isOpen, onClose }) => {
     const now = new Date();
     const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const dayOfMonth = now.getDate();
-    const isReportPeriod = dayOfMonth >= 22 && dayOfMonth <= 30;
+    const isReportPeriod = dayOfMonth >= 20 && dayOfMonth <= 30;
 
     const generateReportData = (): ILTReport => {
         if (!user) throw new Error("No user");

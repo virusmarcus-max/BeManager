@@ -65,7 +65,7 @@ const PermanentRequestsModal: React.FC<PermanentRequestsModalProps> = ({
         );
     };
 
-    const handleAddClick = () => {
+    const handleAddClick = async () => {
         if (!permEmpId) return;
         const emp = employees.find(e => e.id === permEmpId);
 
@@ -89,7 +89,10 @@ const PermanentRequestsModal: React.FC<PermanentRequestsModalProps> = ({
         if (newPermType === 'max_afternoons_per_week') {
             requestData.value = maxAfternoons;
         } else if (newPermType === 'rotating_days_off') {
-            requestData.cycleWeeks = Array.from({ length: rotatingCycleWeeks }).map((_, i) => rotatingCycleDays[i] || []);
+            const weeksData = Array.from({ length: rotatingCycleWeeks }).map((_, i) => ({
+                days: rotatingCycleDays[i] || []
+            }));
+            requestData.cycleWeeks = weeksData;
             requestData.referenceDate = rotatingRefDate;
         } else if (newPermType === 'fixed_rotating_shift') {
             requestData.referenceDate = rotatingRefDate;
@@ -98,9 +101,25 @@ const PermanentRequestsModal: React.FC<PermanentRequestsModalProps> = ({
             requestData.days = selectedDays;
         }
 
-        onAdd(requestData);
-        // Reset specific form fields if needed or just let the effect handle it? 
-        // Better to verify success but usually we assume optimistic UI here or parent handles toast.
+        try {
+            await onAdd(requestData);
+            // Only reset if successful
+            // Reset logic is in useEffect dependent on permEmpId, or manually here?
+            // The user might want to add another restriction for the same employee, so we shouldn't reset permEmpId.
+            // But we might want to reset the form fields.
+            setNewPermType('morning_only');
+            setSelectedDays([]);
+            setMaxAfternoons(3);
+            setRotatingCycleWeeks(2);
+            setRotatingCycleDays([[], []]);
+            setRotatingRefDate('');
+            setFixedRotatingStartDay(1);
+
+            // Initial employee reset? No, keep selected.
+        } catch (error) {
+            console.error("Failed to add component request", error);
+            alert("Error al guardar la petición. Revisa la consola.");
+        }
     };
 
     return (
@@ -159,8 +178,15 @@ const PermanentRequestsModal: React.FC<PermanentRequestsModalProps> = ({
                                                 </div>
                                             )}
                                             {req.type === 'rotating_days_off' && (
-                                                <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
-                                                    Ciclo de {req.cycleWeeks?.length || 2} semanas
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1 flex flex-col gap-1">
+                                                    <span>Ciclo de {req.cycleWeeks?.length || 2} semanas (Inicio: {req.referenceDate ? new Date(req.referenceDate).toLocaleDateString() : '?'})</span>
+                                                    {req.cycleWeeks?.map((weekData, i) => (
+                                                        <span key={i} className="text-slate-400 pl-2">
+                                                            Semana {i + 1}: {weekData.days && weekData.days.length > 0
+                                                                ? weekData.days.map(d => ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][d]).join(', ')
+                                                                : 'Sin libranza'}
+                                                        </span>
+                                                    ))}
                                                 </div>
                                             )}
                                             {req.type === 'fixed_rotating_shift' && (
@@ -222,7 +248,8 @@ const PermanentRequestsModal: React.FC<PermanentRequestsModalProps> = ({
                                                             onChange={(e) => {
                                                                 const n = Number(e.target.value);
                                                                 setRotatingCycleWeeks(n);
-                                                                const newArr = new Array(n).fill([]).map((_, i) => rotatingCycleDays[i] || []);
+                                                                // Safer resize logic
+                                                                const newArr = Array.from({ length: n }, (_, i) => rotatingCycleDays[i] || []);
                                                                 setRotatingCycleDays(newArr);
                                                             }}
                                                             className="premium-select-light w-full text-xs"

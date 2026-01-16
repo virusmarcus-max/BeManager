@@ -4,7 +4,7 @@ import { useStore } from '../context/StoreContext';
 import {
     Save, Calendar as CalendarIcon, Clock, Mail, User, Phone,
     BadgeCheck, Store, Briefcase, ShoppingCart, Package, Truck, Sparkles,
-    UserCheck, ChevronRight, Settings as SettingsIcon, Globe, Map, Bell
+    UserCheck, ChevronRight, Settings as SettingsIcon, Globe, Map, Bell, Lock
 } from 'lucide-react';
 import type { StoreSettings, WorkRole, RoleScheduleConfig } from '../types';
 import { DatePicker } from '../components/DatePicker';
@@ -22,6 +22,62 @@ const SettingsPage: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'general' | 'hours' | 'roles' | 'holidays'>('general');
     const [newHoliday, setNewHoliday] = useState('');
     const [newHolidayType, setNewHolidayType] = useState<'full' | 'afternoon' | 'closed_afternoon'>('full');
+    const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+
+    useEffect(() => {
+        if ('Notification' in window) {
+            setNotificationPermission(Notification.permission);
+        }
+    }, []);
+
+    const requestNotificationPermission = async () => {
+        if (!('Notification' in window)) return;
+        const permission = await Notification.requestPermission();
+        setNotificationPermission(permission);
+    };
+
+    const sendTestNotification = async () => {
+        if (Notification.permission === 'granted') {
+            try {
+                if ('serviceWorker' in navigator) {
+                    console.log("Checking Service Worker registration...");
+                    const registration = await navigator.serviceWorker.getRegistration();
+
+                    if (registration && registration.active) {
+                        console.log("Service Worker active. Sending notification via SW.");
+                        await registration.showNotification('BeManager: Prueba SW', {
+                            body: 'El sistema de notificaciones funciona correctamente.',
+                            icon: '/vite.svg',
+                            tag: 'test-notification',
+                            // @ts-ignore
+                            renotify: true,
+                            requireInteraction: true
+                        });
+                        return;
+                    }
+                }
+            } catch (err) {
+                console.error("SW Notification failed, falling back:", err);
+            }
+
+            // Fallback
+            console.log("Falling back to standard Notification API.");
+            try {
+                new Notification('BeManager: Prueba Estándar', {
+                    body: 'El sistema de notificaciones funciona correctamente.',
+                    icon: '/vite.svg',
+                    tag: 'test-notification',
+                    // @ts-ignore
+                    renotify: true,
+                    requireInteraction: true
+                });
+            } catch (err) {
+                console.error("Error crítico al enviar notificación estándar:", err);
+            }
+        } else {
+            console.warn("Permiso de notificaciones no concedido:", Notification.permission);
+        }
+    };
 
     useEffect(() => {
         setFormData(getSettings(user.establishmentId));
@@ -74,19 +130,32 @@ const SettingsPage: React.FC = () => {
         setDirty(true);
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        updateSettings(formData);
-        setDirty(false);
-        // Toast notification
-        const toast = document.createElement('div');
-        toast.className = 'fixed bottom-8 right-8 bg-indigo-600 text-white px-8 py-4 rounded-2xl shadow-[0_20px_50px_rgba(79,70,229,0.3)] animate-in slide-in-from-bottom duration-500 flex items-center gap-3 z-50 font-bold border border-indigo-400/30 backdrop-blur-md';
-        toast.innerHTML = '<div class="bg-white/20 p-1.5 rounded-lg"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></div> Configuración guardada con éxito';
-        document.body.appendChild(toast);
-        setTimeout(() => {
-            toast.classList.add('opacity-0', 'translate-y-4', 'transition-all', 'duration-500');
-            setTimeout(() => toast.remove(), 500);
-        }, 3000);
+        try {
+            await updateSettings(formData);
+            setDirty(false);
+            // Toast notification
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-8 right-8 bg-indigo-600 text-white px-8 py-4 rounded-2xl shadow-[0_20px_50px_rgba(79,70,229,0.3)] animate-in slide-in-from-bottom duration-500 flex items-center gap-3 z-50 font-bold border border-indigo-400/30 backdrop-blur-md';
+            toast.innerHTML = '<div class="bg-white/20 p-1.5 rounded-lg"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></div> Configuración guardada con éxito';
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-4', 'transition-all', 'duration-500');
+                setTimeout(() => toast.remove(), 500);
+            }, 3000);
+        } catch (error) {
+            console.error("Error saving settings:", error);
+            // Error Toast
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-8 right-8 bg-red-600 text-white px-8 py-4 rounded-2xl shadow-[0_20px_50px_rgba(220,38,38,0.3)] animate-in slide-in-from-bottom duration-500 flex items-center gap-3 z-50 font-bold border border-red-400/30 backdrop-blur-md';
+            toast.innerHTML = '<div class="bg-white/20 p-1.5 rounded-lg"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></div> Error al guardar cambios';
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-4', 'transition-all', 'duration-500');
+                setTimeout(() => toast.remove(), 500);
+            }, 3000);
+        }
     };
 
     const toggleHoliday = (date: string) => {
@@ -409,6 +478,63 @@ const SettingsPage: React.FC = () => {
                                                         onChange={e => handleChange('zipCode', e.target.value)}
                                                         className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-medium text-slate-700 shadow-inner"
                                                     />
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="md:col-span-2 mt-4 pt-8 border-t border-slate-50">
+                                            <div className="flex items-center gap-2 mb-6 ml-1">
+                                                <Lock size={14} className="text-amber-500" />
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Seguridad</label>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contraseña de Acceso</label>
+                                                <input
+                                                    type="text"
+                                                    value={formData.password || ''}
+                                                    onChange={e => handleChange('password', e.target.value)}
+                                                    className="w-full px-6 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all outline-none font-bold text-slate-700 shadow-inner tracking-widest"
+                                                    placeholder="Establecer contraseña..."
+                                                />
+                                                <p className="text-[10px] text-slate-400 font-medium ml-2">Esta contraseña será requerida para acceder al establecimiento.</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="md:col-span-2 mt-4 pt-8 border-t border-slate-50">
+                                            <div className="flex items-center gap-2 mb-6 ml-1">
+                                                <Bell size={14} className="text-indigo-500" />
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Notificaciones</label>
+                                            </div>
+                                            <div className="flex items-center justify-between p-6 bg-slate-50 rounded-[1.5rem] border border-slate-100">
+                                                <div>
+                                                    <h5 className="font-bold text-slate-700 flex items-center gap-2">
+                                                        Avisos de Escritorio
+                                                        {notificationPermission === 'granted' && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full font-black uppercase tracking-wide">Activas</span>}
+                                                    </h5>
+                                                    <p className="text-xs text-slate-400 font-medium mt-1 max-w-md leading-relaxed">
+                                                        {notificationPermission === 'granted' ? 'Las notificaciones están correctamente configuradas.' :
+                                                            notificationPermission === 'denied' ? 'Has bloqueado las notificaciones. Debes habilitarlas manualmente en la configuración de tu navegador.' :
+                                                                'Actívalas para recibir alertas instantáneas cuando se asignen nuevas tareas.'}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    {notificationPermission === 'default' && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={requestNotificationPermission}
+                                                            className="px-5 py-3 bg-indigo-600 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 transition-all active:scale-95"
+                                                        >
+                                                            Activar Avisos
+                                                        </button>
+                                                    )}
+                                                    {notificationPermission === 'granted' && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={sendTestNotification}
+                                                            className="px-5 py-3 bg-white text-indigo-600 text-xs font-bold rounded-xl border border-indigo-100 hover:bg-indigo-50 transition-all shadow-sm active:scale-95"
+                                                        >
+                                                            Probar
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>

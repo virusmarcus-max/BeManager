@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
+import { useToast } from '../context/ToastContext';
 import type { StoreSettings } from '../types';
 import {
     Plus, Trash2, Store, Clock, Calendar, X, XCircle, Coffee
@@ -18,6 +19,7 @@ type TabType = 'schedule' | 'holidays';
 
 const StoreConfigModal: React.FC<StoreConfigModalProps> = ({ isOpen, onClose, establishmentId, onSave }) => {
     const { getSettings, updateSettings, settings: globalSettings } = useStore();
+    const { showToast } = useToast();
     const [settings, setSettings] = useState<StoreSettings | null>(null);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<TabType>('schedule');
@@ -38,16 +40,22 @@ const StoreConfigModal: React.FC<StoreConfigModalProps> = ({ isOpen, onClose, es
         }
     }, [isOpen, establishmentId, getSettings, globalSettings]);
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (settings) {
-            updateSettings(settings);
-            if (onSave) onSave(settings);
+            try {
+                await updateSettings(settings);
+                if (onSave) onSave(settings);
 
-            // Immediately sync back to ensure local state matches global if needed (though effect usage covers it)
-            // But let's force a refresh from the source to be safe
-            setSettings(JSON.parse(JSON.stringify(settings)));
+                // Immediately sync back to ensure local state matches global if needed (though effect usage covers it)
+                // But let's force a refresh from the source to be safe
+                setSettings(JSON.parse(JSON.stringify(settings)));
 
-            onClose();
+                showToast('Configuración guardada correctamente', 'success');
+                onClose();
+            } catch (error) {
+                console.error(error);
+                showToast('Error al guardar configuración.', 'error');
+            }
         }
     };
 
@@ -173,65 +181,81 @@ const StoreConfigModal: React.FC<StoreConfigModalProps> = ({ isOpen, onClose, es
 
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                             {/* Morning Shift */}
-                                            <div className="bg-slate-50 border border-slate-100 rounded-3xl p-7 hover:border-indigo-200 transition-all shadow-sm group">
-                                                <div className="flex items-center gap-4 mb-8">
-                                                    <div className="p-3 bg-amber-100 text-amber-600 rounded-2xl group-hover:scale-110 transition-transform">
+                                            <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm hover:shadow-xl hover:border-amber-200 transition-all group duration-300 relative overflow-hidden">
+                                                <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50 rounded-bl-full -mr-16 -mt-16 group-hover:scale-110 transition-transform duration-500"></div>
+
+                                                <div className="flex items-center gap-5 mb-8 relative">
+                                                    <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform duration-300">
                                                         <SunIcon />
                                                     </div>
-                                                    <h3 className="font-black text-xl text-slate-800 tracking-tight">Turno de Mañana</h3>
+                                                    <div>
+                                                        <h3 className="font-black text-xl text-slate-800 tracking-tight leading-none">Turno de Mañana</h3>
+                                                        <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mt-1.5">Configuración Jornada Matinal</p>
+                                                    </div>
                                                 </div>
 
-                                                <div className="space-y-6">
-                                                    <div className="flex justify-between items-center">
-                                                        <label className="premium-label-light !mb-0">Apertura</label>
-                                                        <input
-                                                            type="time"
-                                                            value={settings.openingHours.morningStart}
-                                                            onChange={(e) => handleTimeChange('morningStart', e.target.value)}
-                                                            className="premium-input-light w-32 text-center text-lg"
-                                                        />
+                                                <div className="grid grid-cols-2 gap-6 relative">
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Entrada</label>
+                                                        <div className="relative group/input">
+                                                            <input
+                                                                type="time"
+                                                                value={settings.openingHours.morningStart}
+                                                                onChange={(e) => handleTimeChange('morningStart', e.target.value)}
+                                                                className="w-full bg-slate-50 border-2 border-slate-100 text-slate-700 text-center font-black text-xl rounded-2xl h-14 outline-none focus:border-amber-400 focus:bg-white transition-all focus:shadow-lg shadow-amber-100/50"
+                                                            />
+                                                        </div>
                                                     </div>
-                                                    <div className="h-px bg-slate-200 w-full" />
-                                                    <div className="flex justify-between items-center">
-                                                        <label className="premium-label-light !mb-0">Cierre</label>
-                                                        <input
-                                                            type="time"
-                                                            value={settings.openingHours.morningEnd}
-                                                            onChange={(e) => handleTimeChange('morningEnd', e.target.value)}
-                                                            className="premium-input-light w-32 text-center text-lg"
-                                                        />
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Salida</label>
+                                                        <div className="relative group/input">
+                                                            <input
+                                                                type="time"
+                                                                value={settings.openingHours.morningEnd}
+                                                                onChange={(e) => handleTimeChange('morningEnd', e.target.value)}
+                                                                className="w-full bg-slate-50 border-2 border-slate-100 text-slate-700 text-center font-black text-xl rounded-2xl h-14 outline-none focus:border-amber-400 focus:bg-white transition-all focus:shadow-lg shadow-amber-100/50"
+                                                            />
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
 
                                             {/* Afternoon Shift */}
-                                            <div className="bg-slate-50 border border-slate-100 rounded-3xl p-7 hover:border-indigo-200 transition-all shadow-sm group">
-                                                <div className="flex items-center gap-4 mb-8">
-                                                    <div className="p-3 bg-indigo-100 text-indigo-600 rounded-2xl group-hover:scale-110 transition-transform">
+                                            <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm hover:shadow-xl hover:border-indigo-200 transition-all group duration-300 relative overflow-hidden">
+                                                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-bl-full -mr-16 -mt-16 group-hover:scale-110 transition-transform duration-500"></div>
+
+                                                <div className="flex items-center gap-5 mb-8 relative">
+                                                    <div className="w-14 h-14 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform duration-300">
                                                         <MoonIcon />
                                                     </div>
-                                                    <h3 className="font-black text-xl text-slate-800 tracking-tight">Turno de Tarde</h3>
+                                                    <div>
+                                                        <h3 className="font-black text-xl text-slate-800 tracking-tight leading-none">Turno de Tarde</h3>
+                                                        <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mt-1.5">Configuración Jornada Vespertina</p>
+                                                    </div>
                                                 </div>
 
-                                                <div className="space-y-6">
-                                                    <div className="flex justify-between items-center">
-                                                        <label className="premium-label-light !mb-0">Apertura</label>
-                                                        <input
-                                                            type="time"
-                                                            value={settings.openingHours.afternoonStart}
-                                                            onChange={(e) => handleTimeChange('afternoonStart', e.target.value)}
-                                                            className="premium-input-light w-32 text-center text-lg"
-                                                        />
+                                                <div className="grid grid-cols-2 gap-6 relative">
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Entrada</label>
+                                                        <div className="relative group/input">
+                                                            <input
+                                                                type="time"
+                                                                value={settings.openingHours.afternoonStart}
+                                                                onChange={(e) => handleTimeChange('afternoonStart', e.target.value)}
+                                                                className="w-full bg-slate-50 border-2 border-slate-100 text-slate-700 text-center font-black text-xl rounded-2xl h-14 outline-none focus:border-indigo-400 focus:bg-white transition-all focus:shadow-lg shadow-indigo-100/50"
+                                                            />
+                                                        </div>
                                                     </div>
-                                                    <div className="h-px bg-slate-200 w-full" />
-                                                    <div className="flex justify-between items-center">
-                                                        <label className="premium-label-light !mb-0">Cierre</label>
-                                                        <input
-                                                            type="time"
-                                                            value={settings.openingHours.afternoonEnd}
-                                                            onChange={(e) => handleTimeChange('afternoonEnd', e.target.value)}
-                                                            className="premium-input-light w-32 text-center text-lg"
-                                                        />
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Salida</label>
+                                                        <div className="relative group/input">
+                                                            <input
+                                                                type="time"
+                                                                value={settings.openingHours.afternoonEnd}
+                                                                onChange={(e) => handleTimeChange('afternoonEnd', e.target.value)}
+                                                                className="w-full bg-slate-50 border-2 border-slate-100 text-slate-700 text-center font-black text-xl rounded-2xl h-14 outline-none focus:border-indigo-400 focus:bg-white transition-all focus:shadow-lg shadow-indigo-100/50"
+                                                            />
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>

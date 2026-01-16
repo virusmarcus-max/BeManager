@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { TrendingUp, X, Trash2 } from 'lucide-react';
+import { TrendingUp, X, Trash2, Users } from 'lucide-react';
 import { DatePicker } from '../DatePicker';
+import { CustomSelect } from '../CustomSelect';
 import ConfirmDialog from '../ConfirmDialog';
 
 interface TempHoursModalProps {
@@ -14,7 +15,7 @@ interface TempHoursModalProps {
 }
 
 const TempHoursModal: React.FC<TempHoursModalProps> = ({ isOpen, onClose, preSelectedEmployeeId, editData }) => {
-    const { employees, addTempHours, removeTempHours } = useStore();
+    const { employees, addTempHours, removeTempHours, schedules } = useStore();
     const { user } = useAuth();
     const { showToast } = useToast();
 
@@ -71,6 +72,39 @@ const TempHoursModal: React.FC<TempHoursModalProps> = ({ isOpen, onClose, preSel
             removeTempHours(editData.empId, editData.adjId);
         }
 
+        // VALIDATION: Check if schedule is closed (approved) for the requested range
+        const startD = new Date(tempStart);
+        const endD = new Date(tempEnd);
+
+        // Normalize time to avoid issues
+        startD.setHours(0, 0, 0, 0);
+        endD.setHours(23, 59, 59, 999);
+
+        const hasClosedSchedule = schedules.some(s => {
+            if (s.establishmentId !== user?.establishmentId) return false;
+
+            // Check if schedule is effectively closed (Published and not Rejected)
+            // If it's pending approval or approved, it should be locked.
+            // If it's draft or rejected, it's open.
+            const isLocked = s.status === 'published' && s.approvalStatus !== 'rejected';
+
+            if (!isLocked) return false;
+
+            const sStart = new Date(s.weekStartDate);
+            sStart.setHours(0, 0, 0, 0);
+            const sEnd = new Date(sStart);
+            sEnd.setDate(sEnd.getDate() + 6);
+            sEnd.setHours(23, 59, 59, 999);
+
+            // Check overlap
+            return (startD <= sEnd && endD >= sStart);
+        });
+
+        if (hasClosedSchedule) {
+            showToast('No se pueden modificar horas en semanas con horario cerrado o pendiente de aprobación', 'error');
+            return;
+        }
+
         addTempHours(tempEmpId, {
             hours: tempHoursVal,
             start: tempStart,
@@ -97,26 +131,22 @@ const TempHoursModal: React.FC<TempHoursModalProps> = ({ isOpen, onClose, preSel
                     <form onSubmit={handleSubmit} className="space-y-6">
                         <div>
                             <label className="premium-label-light">Empleado</label>
-                            <select
-                                className="premium-select-light w-full"
-                                onChange={(e) => {
-                                    setTempEmpId(e.target.value);
-                                    const selectedEmp = employees.find(emp => emp.id === e.target.value);
+                            <CustomSelect
+                                options={filteredEmployees
+                                    .filter(e => e.weeklyHours < 40)
+                                    .map(e => ({ value: e.id, label: `${e.name} (${e.weeklyHours}h)` }))}
+                                value={tempEmpId}
+                                onChange={(val) => {
+                                    setTempEmpId(val as string);
+                                    const selectedEmp = employees.find(emp => emp.id === val);
                                     if (selectedEmp) {
                                         setTempHoursVal(Math.min(40, selectedEmp.weeklyHours + 4));
                                     }
                                 }}
-                                value={tempEmpId}
-                                required
+                                placeholder="-- Seleccionar --"
                                 disabled={!!editData}
-                            >
-                                <option value="" className="bg-white text-slate-900">-- Seleccionar --</option>
-                                {filteredEmployees
-                                    .filter(e => e.weeklyHours < 40)
-                                    .map(e => (
-                                        <option key={e.id} value={e.id} className="bg-white text-slate-900">{e.name} ({e.weeklyHours}h)</option>
-                                    ))}
-                            </select>
+                                icon={Users}
+                            />
                         </div>
 
                         {tempEmpId && (

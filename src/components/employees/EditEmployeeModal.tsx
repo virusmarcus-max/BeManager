@@ -10,7 +10,7 @@ interface EditEmployeeData {
     seniorityDate: string;
     birthDate: string;
     email: string;
-    contractEndDate?: string;
+    contractEndDate?: string | null;
     initials: string;
 }
 
@@ -59,7 +59,7 @@ export default function EditEmployeeModal({ isOpen, onClose, employee, onEdit }:
             seniorityDate,
             birthDate,
             email,
-            contractEndDate: isIndefinite ? undefined : contractEndDate,
+            contractEndDate: isIndefinite ? null : contractEndDate,
             initials: initials.toUpperCase()
         });
         onClose();

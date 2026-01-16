@@ -4,7 +4,7 @@ export interface ILTReportItem {
     employeeId: string;
     employeeName: string;
     hireDate?: string;
-    contractEndDate?: string;
+    contractEndDate?: string | null;
     contractHours?: number; // Weekly contracted hours
 
     // IT (Sick Leave)

@@ -165,7 +165,7 @@ const PremiumNumberInput = ({ value, onChange, label, min = 1, max = 100, placeh
     );
 };
 
-export default function TasksPage() {
+const Tasks = () => {
     const { user } = useAuth();
     const { tasks, addTask, updateTask, updateTaskStatus, triggerCyclicalTask, deleteTask, settings, employees } = useStore();
     const { showToast } = useToast();
@@ -181,7 +181,7 @@ export default function TasksPage() {
     const [completionInitials, setCompletionInitials] = useState('');
 
     // Deletion State
-    const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
+    const [taskToDelete, setTaskToDelete] = useState<{ id: string, type: 'cyclical' | 'scheduled' | 'standard' } | null>(null);
 
     // Create/Edit Form State
     const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -241,6 +241,17 @@ export default function TasksPage() {
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
 
+        // VALIDATION
+        if (formData.type === 'specific_date' && !formData.date) {
+            showToast('Debes seleccionar una fecha de inicio', 'error');
+            return;
+        }
+
+        if (!formData.isAllStores && formData.targetStores.length === 0) {
+            showToast('Debes asignar la tarea a al menos una tienda', 'error');
+            return;
+        }
+
         const taskData: any = {
             title: formData.title,
             description: formData.description,
@@ -263,15 +274,20 @@ export default function TasksPage() {
             taskData.durationDays = formData.durationDays || 1;
         }
 
-        if (editingTask) {
-            updateTask(editingTask.id, taskData);
-            showToast('Tarea actualizada correctamente', 'success');
-        } else {
-            addTask(taskData);
-            showToast('Tarea creada correctamente', 'success');
+        try {
+            if (editingTask) {
+                updateTask(editingTask.id, taskData);
+                showToast('Tarea actualizada correctamente', 'success');
+            } else {
+                addTask(taskData);
+                showToast('Tarea creada correctamente', 'success');
+            }
+            setIsCreateModalOpen(false);
+            resetForm();
+        } catch (error) {
+            console.error("Error launching task:", error);
+            showToast('Error al guardar la tarea. Inténtalo de nuevo.', 'error');
         }
-        setIsCreateModalOpen(false);
-        resetForm();
     };
 
 
@@ -320,6 +336,36 @@ export default function TasksPage() {
                 if (t.isArchived) return false;
             }
             if (filterStore !== 'all' && t.targetStores !== 'all' && !t.targetStores.includes(filterStore)) return false;
+
+            // NEW: Hide future tasks matching Manager logic
+            if (t.type === 'specific_date' && t.date) {
+                const taskDate = new Date(t.date);
+                taskDate.setHours(0, 0, 0, 0);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                if (taskDate > today) return false;
+            }
+
+            // NEW: Filter Cyclical Tasks
+            if (t.isCyclical) {
+                const today = new Date();
+
+                if (t.cycleUnit === 'months') {
+                    const currentDay = today.getDate();
+                    const startDay = t.cyclicalDayOfMonth || 1;
+                    const duration = t.durationDays || 1;
+                    if (currentDay < startDay || currentDay >= startDay + duration) return false;
+                }
+
+                if (t.cycleUnit === 'weeks') {
+                    const currentDayOfWeek = today.getDay();
+                    const startDayOfWeek = t.cyclicalDayOfWeek || 0;
+                    const duration = t.durationDays || 1;
+                    const diff = (currentDayOfWeek - startDayOfWeek + 7) % 7;
+                    if (diff >= duration) return false;
+                }
+            }
+
             return true;
         });
     }, [tasks, filterStore, user?.role, showHistory]);
@@ -345,6 +391,47 @@ export default function TasksPage() {
         return [...myTasks]
             .filter(task => {
                 if (task.isArchived) return false;
+
+                // NEW: Hide future tasks (Specific Date)
+                if (task.type === 'specific_date' && task.date) {
+                    const taskDate = new Date(task.date);
+                    taskDate.setHours(0, 0, 0, 0);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+
+                    if (taskDate > today) return false;
+                }
+
+                // NEW: Filter Cyclical Tasks
+                if (task.isCyclical) {
+                    const today = new Date();
+
+                    if (task.cycleUnit === 'months') {
+                        const currentDay = today.getDate();
+                        const startDay = task.cyclicalDayOfMonth || 1;
+                        const duration = task.durationDays || 1;
+                        // Show only if within the active window [startDay, startDay + duration)
+                        // This effectively hides it before the 20th and resets it after the duration passes
+                        if (currentDay < startDay || currentDay >= startDay + duration) return false;
+                    }
+
+                    if (task.cycleUnit === 'weeks') {
+                        const currentDayOfWeek = today.getDay(); // 0-6
+                        const startDayOfWeek = task.cyclicalDayOfWeek || 0; // 0-6
+                        const duration = task.durationDays || 1;
+
+                        // Calculate days passed since start of cycle (handling week wrap)
+                        const diff = (currentDayOfWeek - startDayOfWeek + 7) % 7;
+
+                        // Show only if we are within 'duration' days from the start day
+                        if (diff >= duration) return false;
+
+                        // Additional check: If duration is notably long (e.g. 7 days), it's always shown.
+                        // But typically duration is small (e.g. 1-3 days).
+                        // If user sets Start Friday (5), Duration 3 -> Active Fri(0), Sat(1), Sun(2). Mon(3) is hidden. Correct.
+                    }
+                }
+
                 const status = getMyStatus(task);
                 if (showHistory) return status === 'completed';
                 return status !== 'completed';
@@ -371,7 +458,7 @@ export default function TasksPage() {
         const allStoreIds = Array.from(new Set([
             ...settings.map(s => s.establishmentId),
             ...employees.map(e => e.establishmentId)
-        ])).sort();
+        ])).filter(id => id !== 'super').sort();
 
         const allStores = allStoreIds.length > 0 ? allStoreIds.map(id => ({
             id,
@@ -416,65 +503,155 @@ export default function TasksPage() {
                     </div>
                 </div>
 
-                {/* Cyclical Tasks Quick View - Redesigned */}
-                {tasks.some(t => t.isCyclical && !t.isArchived) && (
-                    <div className="mb-12">
-                        <div className="flex items-center justify-between mb-6 px-2">
-                            <h3 className="text-white font-black flex items-center gap-3">
-                                <div className="p-2 bg-pink-500/10 rounded-xl">
-                                    <RotateCcw size={20} className="text-pink-400" />
-                                </div>
-                                <span className="text-xl tracking-tight">Plantillas Cíclicas <span className="text-slate-500 font-medium">Activas</span></span>
+                {/* Split View for Cyclical & Future Quick Actions */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+                    {/* Column 1: Cyclical Templates */}
+                    <div className="bg-slate-900/20 border border-slate-800/50 rounded-[2rem] p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-white font-black flex items-center gap-2 text-sm uppercase tracking-wider">
+                                <RotateCcw size={16} className="text-pink-400" />
+                                Plantillas Cíclicas
                             </h3>
-                            <span className="text-[10px] font-black text-slate-400 bg-slate-900/50 px-3 py-1.5 rounded-full uppercase tracking-widest border border-slate-800 shadow-xl backdrop-blur-md">
-                                {tasks.filter(t => t.isCyclical && !t.isArchived).length} Ciclos en curso
+                            <span className="text-[9px] font-black text-slate-500 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800">
+                                {tasks.filter(t => t.isCyclical && !t.isArchived).length} ACTIVAS
                             </span>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                            {tasks.filter(t => t.isCyclical && !t.isArchived).map(task => (
-                                <div key={task.id} className="bg-slate-900/40 border border-slate-800 rounded-3xl p-5 hover:border-indigo-500/50 transition-all group relative overflow-hidden">
-                                    <div className="absolute top-0 right-0 w-24 h-24 bg-pink-500/10 blur-3xl -mr-8 -mt-8 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-
-                                    <div className="flex justify-between items-start mb-4 relative z-10">
-                                        <div className="flex-1 min-w-0">
-                                            <h4 className="font-bold text-white text-sm line-clamp-1 group-hover:text-indigo-400 transition-colors uppercase tracking-tight">{task.title}</h4>
-                                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
-                                                {task.cycleUnit === 'weeks' ? 'Semanal' : 'Mensual'}
-                                            </p>
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                            {tasks.filter(t => t.isCyclical && !t.isArchived).length === 0 ? (
+                                <div className="text-center py-8 text-slate-600 text-xs italic">No hay plantillas cíclicas activas</div>
+                            ) : (
+                                tasks.filter(t => t.isCyclical && !t.isArchived).map(task => (
+                                    <div key={task.id} className="group flex items-center justify-between p-3 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 rounded-xl transition-all">
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <div className="w-8 h-8 rounded-lg bg-pink-500/10 flex items-center justify-center shrink-0">
+                                                <RotateCcw size={14} className="text-pink-400" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <h4 className="text-white font-bold text-xs truncate">{task.title}</h4>
+                                                <div className="flex items-center gap-2 text-[9px] text-slate-500 uppercase tracking-wide">
+                                                    <span>{task.cycleUnit === 'weeks' ? 'Semanal' : 'Mensual'}</span>
+                                                    <span>•</span>
+                                                    <span className="text-indigo-300">
+                                                        {task.cycleUnit === 'weeks'
+                                                            ? ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][task.cyclicalDayOfWeek || 0]
+                                                            : `Día ${task.cyclicalDayOfMonth}`}
+                                                    </span>
+                                                    <span>•</span>
+                                                    <span className="text-emerald-400 font-bold truncate max-w-[100px]" title={task.targetStores === 'all' ? 'Todas' : task.targetStores.map(id => allStores.find(s => s.id === id)?.name).join(', ')}>
+                                                        {task.targetStores === 'all' ? 'Todas' : task.targetStores.map(id => allStores.find(s => s.id === id)?.name || id).join(', ')}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                if (window.confirm('¿Eliminar esta configuración cíclica permanentemente?')) {
-                                                    deleteTask(task.id);
-                                                    showToast('Plantilla cíclica eliminada', 'success');
-                                                }
-                                            }}
-                                            className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
-                                            title="Eliminar plantilla"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
+                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleOpenEdit(task);
+                                                }}
+                                                className="p-2 text-slate-500 hover:text-white hover:bg-slate-700/50 rounded-lg"
+                                            >
+                                                <Edit2 size={14} />
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setTaskToDelete({ id: task.id, type: 'cyclical' });
+                                                }}
+                                                className="p-2 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     </div>
-
-                                    <div className="flex flex-col gap-2 relative z-10">
-                                        <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 bg-slate-950/50 px-3 py-2 rounded-xl border border-slate-800">
-                                            <Clock size={12} className="text-indigo-400" />
-                                            Frecuencia: Cada {task.cycleFrequency} {task.cycleUnit === 'weeks' ? 'sem' : 'mes'}
-                                        </div>
-                                        <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 bg-slate-950/50 px-3 py-2 rounded-xl border border-slate-800">
-                                            <Calendar size={12} className="text-emerald-400" />
-                                            {task.cycleUnit === 'weeks'
-                                                ? ['Domingos', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábados'][task.cyclicalDayOfWeek || 0]
-                                                : `Día ${task.cyclicalDayOfMonth} del mes`}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
+                                ))
+                            )}
                         </div>
                     </div>
-                )}
+
+                    {/* Column 2: Scheduled Future Tasks */}
+                    <div className="bg-slate-900/20 border border-slate-800/50 rounded-[2rem] p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-white font-black flex items-center gap-2 text-sm uppercase tracking-wider">
+                                <Calendar size={16} className="text-blue-400" />
+                                Actuaciones Programadas
+                            </h3>
+                            <span className="text-[9px] font-black text-slate-500 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800">
+                                FUTURAS
+                            </span>
+                        </div>
+
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                            {tasks.filter(t => {
+                                if (t.isArchived || t.isCyclical || !t.date) return false;
+                                const taskDate = new Date(t.date);
+                                taskDate.setHours(0, 0, 0, 0);
+                                const today = new Date();
+                                today.setHours(0, 0, 0, 0);
+                                return taskDate > today;
+                            }).length === 0 ? (
+                                <div className="text-center py-8 text-slate-600 text-xs italic">No hay actuaciones programadas</div>
+                            ) : (
+                                tasks.filter(t => {
+                                    if (t.isArchived || t.isCyclical || !t.date) return false;
+                                    const taskDate = new Date(t.date);
+                                    taskDate.setHours(0, 0, 0, 0);
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    return taskDate > today;
+                                }).map(task => (
+                                    <div key={task.id} className="group flex items-center justify-between p-3 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 rounded-xl transition-all">
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
+                                                <Calendar size={14} className="text-blue-400" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <h4 className="text-white font-bold text-xs truncate">{task.title}</h4>
+                                                <div className="flex items-center gap-2 text-[9px] text-slate-500 uppercase tracking-wide">
+                                                    <span className="text-blue-300">{new Date(task.date!).toLocaleDateString('es-ES')}</span>
+                                                    <span>•</span>
+                                                    <span>
+                                                        {(() => {
+                                                            const today = new Date();
+                                                            today.setHours(0, 0, 0, 0);
+                                                            const tDate = new Date(task.date!);
+                                                            tDate.setHours(0, 0, 0, 0);
+                                                            const diffTime = tDate.getTime() - today.getTime();
+                                                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                                            return `Faltan ${diffDays}d`;
+                                                        })()}
+                                                    </span>
+                                                    <span>•</span>
+                                                    <span className="text-emerald-400 font-bold truncate max-w-[100px]" title={task.targetStores === 'all' ? 'Todas' : task.targetStores.map(id => allStores.find(s => s.id === id)?.name).join(', ')}>
+                                                        {task.targetStores === 'all' ? 'Todas' : task.targetStores.map(id => allStores.find(s => s.id === id)?.name || id).join(', ')}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={() => handleOpenEdit(task)}
+                                                className="p-2 text-slate-500 hover:text-white hover:bg-slate-700/50 rounded-lg"
+                                            >
+                                                <Edit2 size={14} />
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setTaskToDelete({ id: task.id, type: 'scheduled' });
+                                                }}
+                                                className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
 
                 {/* Filters */}
                 <div className="flex flex-wrap items-center gap-2 mb-8 overflow-x-auto pb-2 custom-scrollbar">
@@ -568,7 +745,7 @@ export default function TasksPage() {
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        onClick={(e) => { e.stopPropagation(); setTaskToDelete(task.id); }}
+                                                        onClick={(e) => { e.stopPropagation(); setTaskToDelete({ id: task.id, type: 'standard' }); }}
                                                         className="p-3 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-2xl transition-all border border-rose-500/20 shadow-xl relative z-50 pointer-events-auto"
                                                         title="Eliminar"
                                                     >
@@ -586,7 +763,7 @@ export default function TasksPage() {
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        onClick={(e) => { e.stopPropagation(); setTaskToDelete(task.id); }}
+                                                        onClick={(e) => { e.stopPropagation(); setTaskToDelete({ id: task.id, type: 'standard' }); }}
                                                         className="p-3 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-2xl transition-all border border-rose-500/20 shadow-xl relative z-50 pointer-events-auto"
                                                     >
                                                         <Trash2 size={18} />
@@ -987,7 +1164,7 @@ export default function TasksPage() {
                     isDestructive={true}
                     onConfirm={() => {
                         if (taskToDelete) {
-                            deleteTask(taskToDelete);
+                            deleteTask(taskToDelete.id);
                             showToast('Tarea eliminada correctamente', 'success');
                             setTaskToDelete(null);
                         }
@@ -1153,6 +1330,28 @@ export default function TasksPage() {
                     </div>
                 </div>
             )}
+            {/* Deletion Confirmation Dialog */}
+            <ConfirmDialog
+                isOpen={!!taskToDelete}
+                title={taskToDelete?.type === 'cyclical' ? '¿Eliminar plantilla cíclica?' : '¿Eliminar tarea?'}
+                message={taskToDelete?.type === 'cyclical'
+                    ? "Esta acción eliminará permanentemente la configuración cíclica. Esta acción no se puede deshacer."
+                    : "Esta acción eliminará la tarea seleccionada permanentemente. ¿Estás seguro?"}
+                confirmText="Eliminar"
+                cancelText="Cancelar"
+                isDestructive={true}
+                onConfirm={() => {
+                    if (taskToDelete) {
+                        deleteTask(taskToDelete.id);
+                        showToast(taskToDelete.type === 'cyclical' ? 'Plantilla eliminada' : 'Tarea eliminada', 'success');
+                        setTaskToDelete(null);
+                    }
+                }}
+                onCancel={() => setTaskToDelete(null)}
+            />
         </div>
+
     );
-}
+};
+
+export default Tasks;

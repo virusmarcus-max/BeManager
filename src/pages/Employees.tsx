@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { useStore } from '../context/StoreContext';
 import { useAuth } from '../context/AuthContext';
@@ -18,10 +19,11 @@ import clsx from 'clsx';
 import VacationModal from '../components/employees/VacationModal';
 import TempHoursModal from '../components/employees/TempHoursModal';
 import ILTReportModal from '../components/employees/ILTReportModal';
+import { CustomSelect } from '../components/CustomSelect';
 
 const EmployeesPage: React.FC = () => {
     const { user } = useAuth();
-    const { employees, addEmployee, updateEmployee, deactivateEmployee, reactivateEmployee, permanentRequests, addPermanentRequest, removePermanentRequest, addTimeOff, removeTimeOff, timeOffRequests, schedules } = useStore();
+    const { employees, addEmployee, updateEmployee, deactivateEmployee, deleteEmployee, reactivateEmployee, permanentRequests, addPermanentRequest, removePermanentRequest, addTimeOff, removeTimeOff, timeOffRequests, schedules } = useStore();
     const { showToast } = useToast();
     const { removeTempHours } = useStore();
 
@@ -57,6 +59,10 @@ const EmployeesPage: React.FC = () => {
     const [deactivationReason, setDeactivationReason] = useState('');
     const [deactivationDate, setDeactivationDate] = useState('');
     const [showInactive, setShowInactive] = useState(false);
+
+    // Hard Delete State
+    const [isConfirmHardDeleteOpen, setIsConfirmHardDeleteOpen] = useState(false);
+    const [employeeToDeleteId, setEmployeeToDeleteId] = useState<string | null>(null);
     // Reactivation Modal State
     const [isReactivateModalOpen, setIsReactivateModalOpen] = useState(false);
     const [reactivatingEmpId, setReactivatingEmpId] = useState<string | null>(null);
@@ -213,14 +219,19 @@ const EmployeesPage: React.FC = () => {
         }
     };
 
-    const handleAdd = (employeeData: any) => {
-        addEmployee({
-            ...employeeData,
-            establishmentId: user.establishmentId,
-        });
+    const handleAdd = async (employeeData: any) => {
+        try {
+            await addEmployee({
+                ...employeeData,
+                establishmentId: user.establishmentId,
+            });
 
-        showToast('Empleado añadido correctamente', 'success');
-        setIsAddModalOpen(false);
+            showToast('Empleado añadido correctamente', 'success');
+            setIsAddModalOpen(false);
+        } catch (error: any) {
+            console.error(error);
+            showToast(`Error: ${error.message || 'Verifica tu conexión'}`, 'error');
+        }
     };
 
     const handleDeactivateClick = (id: string) => {
@@ -260,11 +271,16 @@ const EmployeesPage: React.FC = () => {
         setIsEditModalOpen(true);
     };
 
-    const handleEdit = (id: string, data: any) => {
-        updateEmployee(id, data);
-        showToast('Empleado modificado correctamente', 'success');
-        setIsEditModalOpen(false);
-        setEditingEmployee(null);
+    const handleEdit = async (id: string, data: any) => {
+        try {
+            await updateEmployee(id, data);
+            showToast('Empleado modificado correctamente', 'success');
+            setIsEditModalOpen(false);
+            setEditingEmployee(null);
+        } catch (error) {
+            console.error(error);
+            showToast('Error al modificar empleado', 'error');
+        }
     };
 
     const openPermModal = (id: string) => {
@@ -273,6 +289,39 @@ const EmployeesPage: React.FC = () => {
     }
 
 
+
+    const isDateBlockedForSickLeave = (date: Date) => {
+        if (!sickEmpId) return false;
+
+        const checkDate = new Date(date);
+        checkDate.setHours(0, 0, 0, 0);
+        const checkTime = checkDate.getTime();
+
+        return timeOffRequests.some(req => {
+            if (editingSickInfoId && req.id === editingSickInfoId) return false;
+
+            // Only check constraints for the same employee
+            if (req.employeeId !== sickEmpId) return false;
+
+            // Check against Sick Leaves and Maternity/Paternity (ignore vacations)
+            if (req.type !== 'sick_leave' && req.type !== 'maternity_paternity') return false;
+
+            if (req.startDate && req.endDate) {
+                const start = parseLocalDate(req.startDate);
+                start.setHours(0, 0, 0, 0);
+                const end = parseLocalDate(req.endDate);
+                end.setHours(0, 0, 0, 0);
+                return checkTime >= start.getTime() && checkTime <= end.getTime();
+            } else if (req.dates && req.dates.length > 0) {
+                return req.dates.some(d => {
+                    const tDate = parseLocalDate(d);
+                    tDate.setHours(0, 0, 0, 0);
+                    return tDate.getTime() === checkTime;
+                });
+            }
+            return false;
+        });
+    };
 
     const handleAddSickLeave = (e: React.FormEvent) => {
         e.preventDefault();
@@ -338,6 +387,9 @@ const EmployeesPage: React.FC = () => {
 
 
 
+
+
+
     return (
         <div className="min-h-screen bg-[#F8FAFC] p-4 lg:p-8">
             <div className="max-w-[1600px] mx-auto space-y-8 animate-in fade-in duration-700">
@@ -386,6 +438,7 @@ const EmployeesPage: React.FC = () => {
                             </button>
                         </div>
 
+
                         <button
                             onClick={() => setIsAddModalOpen(true)}
                             className="bg-indigo-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center gap-2"
@@ -394,6 +447,8 @@ const EmployeesPage: React.FC = () => {
                         </button>
                     </div>
                 </div>
+
+
 
                 {/* Stats Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -809,6 +864,7 @@ const EmployeesPage: React.FC = () => {
                                         </div>
                                         <div>
                                             <h3 className="font-bold text-slate-900 text-lg leading-tight line-clamp-1">{emp.name}</h3>
+
                                             <div className="flex items-center gap-2 mt-1">
                                                 <span className="bg-slate-50 text-slate-500 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg border border-slate-100">
                                                     {emp.category}
@@ -909,12 +965,25 @@ const EmployeesPage: React.FC = () => {
                                     <Plane size={14} /> Vacaciones
                                 </button>
                                 {!emp.active && (
-                                    <button
-                                        onClick={() => handleReactivateClick(emp.id)}
-                                        className="col-span-2 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-emerald-600 text-white shadow-lg shadow-emerald-200 hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
-                                    >
-                                        <RotateCcw size={14} /> Reactivar Empleado
-                                    </button>
+                                    <>
+                                        <button
+                                            onClick={() => handleReactivateClick(emp.id)}
+                                            className="col-span-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-emerald-600 text-white shadow-lg shadow-emerald-200 hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
+                                            title="Reactivar Empleado"
+                                        >
+                                            <RotateCcw size={14} /> Reactivar
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setEmployeeToDeleteId(emp.id);
+                                                setIsConfirmHardDeleteOpen(true);
+                                            }}
+                                            className="col-span-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-white text-red-600 border border-red-200 hover:bg-red-50 hover:border-red-300 transition-all flex items-center justify-center gap-2"
+                                            title="Eliminar Definitivamente"
+                                        >
+                                            <Trash2 size={14} /> Eliminar
+                                        </button>
+                                    </>
                                 )}
                                 {emp.active && (
                                     <button
@@ -954,10 +1023,10 @@ const EmployeesPage: React.FC = () => {
             <PermanentRequestsModal
                 isOpen={isPermModalOpen}
                 onClose={() => setIsPermModalOpen(false)}
-                employees={employees}
+                employees={allStoreEmployees}
                 requests={permanentRequests}
-                onAdd={(req) => {
-                    addPermanentRequest(req);
+                onAdd={async (req) => {
+                    await addPermanentRequest(req);
                     showToast('Petición añadida correctamente', 'success');
                 }}
                 onRemove={(id) => {
@@ -1009,17 +1078,13 @@ const EmployeesPage: React.FC = () => {
                             <form onSubmit={handleAddSickLeave} className="p-8 space-y-6 overflow-y-auto custom-scrollbar">
                                 <div>
                                     <label className="premium-label-light">Empleado</label>
-                                    <select
-                                        className="premium-select-light w-full"
+                                    <CustomSelect
+                                        options={employees.filter(e => e.establishmentId === user.establishmentId).map(e => ({ value: e.id, label: e.name }))}
                                         value={sickEmpId || ''}
-                                        onChange={e => setSickEmpId(e.target.value)}
-                                        required
-                                    >
-                                        <option value="" className="bg-white text-slate-900">-- Seleccionar Empleado --</option>
-                                        {employees.filter(e => e.establishmentId === user.establishmentId).map(e => (
-                                            <option key={e.id} value={e.id} className="bg-white text-slate-900">{e.name}</option>
-                                        ))}
-                                    </select>
+                                        onChange={(val) => setSickEmpId(val as string)}
+                                        placeholder="-- Seleccionar Empleado --"
+                                        icon={Users}
+                                    />
                                 </div>
                                 <div>
                                     <label className="premium-label-light">Tipo de Baja</label>
@@ -1038,12 +1103,14 @@ const EmployeesPage: React.FC = () => {
                                         value={sickStartDate}
                                         onChange={setSickStartDate}
                                         required
+                                        isDateDisabled={isDateBlockedForSickLeave}
                                     />
                                     <DatePicker variant="light"
                                         label="Fecha Fin (Estimada)"
                                         value={sickEndDate}
                                         onChange={setSickEndDate}
                                         required
+                                        isDateDisabled={isDateBlockedForSickLeave}
                                     />
                                 </div>
                                 <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex gap-3">
@@ -1329,6 +1396,31 @@ const EmployeesPage: React.FC = () => {
 
 
             {/* Deactivation Modal */}
+            <ConfirmDialog
+                isOpen={isConfirmHardDeleteOpen}
+                title="¿Eliminar Empleado Definitivamente?"
+                message="Esta acción borrará permanentemente al empleado y todo su historial, solicitudes y registros. NO se puede deshacer. ¿Estás seguro?"
+                confirmText="Sí, Eliminar Todo"
+                cancelText="Cancelar"
+                isDestructive={true}
+                onConfirm={async () => {
+                    if (employeeToDeleteId) {
+                        try {
+                            await deleteEmployee(employeeToDeleteId);
+                            showToast('Empleado eliminado definitivamente', 'success');
+                        } catch (error) {
+                            showToast('Error al eliminar empleado', 'error');
+                        }
+                        setIsConfirmHardDeleteOpen(false);
+                        setEmployeeToDeleteId(null);
+                    }
+                }}
+                onCancel={() => {
+                    setIsConfirmHardDeleteOpen(false);
+                    setEmployeeToDeleteId(null);
+                }}
+            />
+
             {
                 isDeactivateModalOpen && (
                     <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 z-50 backdrop-blur-sm">

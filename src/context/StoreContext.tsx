@@ -2,8 +2,24 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { Employee, WeeklySchedule, BreakLog, StoreSettings, TimeOffRequest, EmployeeLog, Shift, PermanentRequest, HoursDebtLog, TemporaryHoursAdjustment, Notification, Task, TaskStatus, IncentiveReport, ILTReport } from '../types';
 import { generateWeeklySchedule } from '../services/scheduler';
 import { DEFAULT_STORE_NAMES } from '../services/storeConfig';
+import { db } from '../firebase';
+import { calculateWeeklyHours } from '../utils/hoursUtils';
+import { collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, query, getDocs, getDoc, increment, deleteField, where } from 'firebase/firestore';
 
-
+// Polyfill for environments where crypto.randomUUID is not available (e.g. non-HTTPS)
+const generateUUID = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        try {
+            return crypto.randomUUID();
+        } catch (e) {
+            // Fallback if it fails
+        }
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+};
 
 const DEFAULT_SETTINGS: Omit<StoreSettings, 'establishmentId'> = {
     storeName: '',
@@ -39,41 +55,6 @@ const DEFAULT_SETTINGS: Omit<StoreSettings, 'establishmentId'> = {
     }
 };
 
-const INITIAL_EMPLOYEES: Employee[] = [
-    // Sevilla 1
-    { id: '1-1', name: 'Alejandro Rodriguez Freita', establishmentId: '1', weeklyHours: 40, active: true, category: 'Empleado', initials: 'AR1', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-2', name: 'Gonzalo Arenas Del Cuerpo', establishmentId: '1', weeklyHours: 40, active: true, category: 'Empleado', initials: 'GAC', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-3', name: 'Antonio Perez Rodriguez', establishmentId: '1', weeklyHours: 32, active: true, category: 'Empleado', initials: 'APR', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-4', name: 'Juan Manuel Neri Garcia', establishmentId: '1', weeklyHours: 40, active: true, category: 'Empleado', initials: 'JMN', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-5', name: 'Eva Maria Marco Anacleto', establishmentId: '1', weeklyHours: 20, active: true, category: 'Empleado', initials: 'EM', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-6', name: 'Tamara Alvarez mejias', establishmentId: '1', weeklyHours: 32, active: true, category: 'Empleado', initials: 'TAM', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-7', name: 'FRANCISCA SEDEÑO', establishmentId: '1', weeklyHours: 24, active: true, category: 'Empleado', initials: 'HLJ', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-8', name: 'Jesica Romero Amador', establishmentId: '1', weeklyHours: 28, active: true, category: 'Empleado', initials: 'JRA', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-9', name: 'Manuel Ramos Benedito', establishmentId: '1', weeklyHours: 32, active: true, category: 'Empleado', initials: 'MB', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-10', name: 'Miguel Quiroga Martinez', establishmentId: '1', weeklyHours: 40, active: true, category: 'Empleado', initials: 'MQ', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-11', name: 'Orlando Isaa Moreno de la Cruz', establishmentId: '1', weeklyHours: 32, active: true, category: 'Empleado', initials: 'OMD', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-12', name: 'Cristina Molina', establishmentId: '1', weeklyHours: 24, active: true, category: 'Empleado', initials: 'CASS', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '1-13', name: 'Teresa Gaitica Lopez', establishmentId: '1', weeklyHours: 20, active: true, category: 'Empleado', initials: 'TERE', hoursDebt: 0, contractType: 'indefinido' },
-
-    // Sevilla 2
-    { id: '2-1', name: 'FRANCISCO MESA MOLINA', establishmentId: '2', weeklyHours: 40, active: true, category: 'Empleado', initials: 'FM', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-2', name: 'ANGEL RAFA MORENO LANCHA', establishmentId: '2', weeklyHours: 24, active: true, category: 'Empleado', initials: 'RML', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-3', name: 'MANU SOLIER', establishmentId: '2', weeklyHours: 40, active: true, category: 'Empleado', initials: 'MS', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-4', name: 'ALICIA peñuela', establishmentId: '2', weeklyHours: 32, active: true, category: 'Empleado', initials: 'APM', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-5', name: 'JOSE CARLOS BARRIENTOS', establishmentId: '2', weeklyHours: 40, active: true, category: 'Empleado', initials: 'JCB', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-6', name: 'JUAN MANU HIDALGO RAMIREZ', establishmentId: '2', weeklyHours: 40, active: true, category: 'Empleado', initials: 'JMH', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-7', name: 'Gonzalo Gonzalez Sosa', establishmentId: '2', weeklyHours: 40, active: true, category: 'Empleado', initials: 'GG', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-8', name: 'EVA MARIA JIMENEZ PERALTA', establishmentId: '2', weeklyHours: 20, active: true, category: 'Empleado', initials: 'EJP', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-9', name: 'TOÑI CASTRO MESA', establishmentId: '2', weeklyHours: 40, active: true, category: 'Empleado', initials: 'TC', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-10', name: 'MARIA BELEN MATEOS PEREZ', establishmentId: '2', weeklyHours: 26, active: true, category: 'Empleado', initials: 'BMP', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-11', name: 'RUBEN NOGUERO LOBO', establishmentId: '2', weeklyHours: 32, active: true, category: 'Responsable', initials: 'RNL', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-12', name: 'ALBERTO CONDE OLMO', establishmentId: '2', weeklyHours: 40, active: true, category: 'Empleado', initials: 'AOC', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-13', name: 'ANGEL Luna Perejon', establishmentId: '2', weeklyHours: 24, active: true, category: 'Empleado', initials: 'ALP', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-14', name: 'ALEJANDRO GUERRA', establishmentId: '2', weeklyHours: 32, active: true, category: 'Empleado', initials: 'AGR', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-15', name: 'PAOLA SANDOVAL', establishmentId: '2', weeklyHours: 24, active: true, category: 'Empleado', initials: 'PES', hoursDebt: 0, contractType: 'indefinido' },
-    { id: '2-16', name: 'Monica Gomez', establishmentId: '2', weeklyHours: 40, active: true, category: 'Empleado', initials: 'mg', hoursDebt: 0, contractType: 'indefinido' },
-];
-
 interface StoreContextType {
     employees: Employee[];
     schedules: WeeklySchedule[];
@@ -94,8 +75,9 @@ interface StoreContextType {
 
     markNotificationAsRead: (id: string) => void;
     removeNotification: (id: string) => void;
-    addEmployee: (employee: Omit<Employee, 'id' | 'active' | 'hoursDebt'>) => string;
+    addEmployee: (employee: Omit<Employee, 'id' | 'active' | 'hoursDebt'>) => Promise<string>;
     deactivateEmployee: (id: string, reason: string, contractEndDate?: string) => void;
+    deleteEmployee: (id: string) => Promise<void>;
     reactivateEmployee: (id: string, options?: { contractType?: 'indefinido' | 'temporal', contractEndDate?: string, substitutingId?: string }) => void;
     updateEmployee: (id: string, updates: Partial<Employee>) => void;
     // Incentives
@@ -112,8 +94,8 @@ interface StoreContextType {
     publishSchedule: (scheduleId: string) => void;
     getSettings: (establishmentId: string) => StoreSettings;
     getManagerNames: (establishmentId: string) => string;
-    updateSettings: (newSettings: StoreSettings) => void;
-    addTimeOff: (request: Omit<TimeOffRequest, 'id' | 'status'>) => void;
+    updateSettings: (newSettings: StoreSettings) => Promise<void>;
+    addTimeOff: (request: Omit<TimeOffRequest, 'id' | 'status'>) => Promise<void>;
     removeTimeOff: (id: string) => void;
     updateTimeOff: (id: string, updates: Partial<TimeOffRequest>) => void;
     addPermanentRequest: (req: Omit<PermanentRequest, 'id'>) => void;
@@ -122,17 +104,21 @@ interface StoreContextType {
     updateHoursDebt: (employeeId: string, amount: number, reason: string, scheduleId?: string) => void;
     addTempHours: (employeeId: string, adjustment: Omit<TemporaryHoursAdjustment, 'id'>) => void;
     removeTempHours: (employeeId: string, adjustmentId: string) => void;
-    updateScheduleStatus: (scheduleId: string, status: 'draft' | 'pending' | 'approved' | 'rejected', notes?: string) => void;
-    requestScheduleModification: (scheduleId: string, reason: string) => void;
-    respondToModificationRequest: (scheduleId: string, status: 'approved' | 'rejected', notes?: string) => void;
+    updateScheduleStatus: (scheduleId: string, status: 'draft' | 'pending' | 'approved' | 'rejected', notes?: string) => Promise<void>;
+    requestScheduleModification: (scheduleId: string, reason: string) => Promise<void>;
+    respondToModificationRequest: (scheduleId: string, status: 'approved' | 'rejected', notes?: string) => Promise<void>;
     resetData: () => void;
+    isLoaded: boolean;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
+import { useAuth } from './AuthContext';
 
+// ... (imports remain)
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const { user } = useAuth(); // Import user from AuthContext
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [schedules, setSchedules] = useState<WeeklySchedule[]>([]);
     const [breakLogs, setBreakLogs] = useState<BreakLog[]>([]);
@@ -147,218 +133,210 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const [tasks, setTasks] = useState<Task[]>([]);
     const [isLoaded, setIsLoaded] = useState(false);
 
-    // Load from LocalStorage
+    // Initial Migration Logic (Only if user is logged in to allow writes if needed, or if we want to migrate irrespective?
+    // The previous code didn't check user, but we can't write to DB without user if rules block it.
+    // Migration reads from LocalStorage, so it's fine. But writing to DB needs auth.
+    // We'll move this inside the auth check or just leave it but it might fail if not logged in.
+    // Safest is to do nothing until logged in.
     useEffect(() => {
-        const storedData = localStorage.getItem('saas_schedule_clean_v2');
-        if (storedData) {
-            try {
-                const parsed = JSON.parse(storedData);
-                if (parsed.employees && parsed.employees.length > 0) {
-                    setEmployees((parsed.employees || []).map((e: any) => ({
-                        ...e,
-                        hoursDebt: e.hoursDebt || 0
-                    })));
-                    setSchedules(parsed.schedules || []);
-                    setBreakLogs(parsed.breakLogs || []);
-                    setEmployeeLogs(parsed.employeeLogs || []);
-                    setSettings((parsed.settings || []).map((s: any) => ({
-                        ...s,
-                        holidays: (s.holidays || []).map((h: any) => (typeof h === 'string' ? { date: h, type: 'full' } : h))
-                    })));
-                    setTimeOffRequests(parsed.timeOffRequests || []);
-                    setPermanentRequests(parsed.permanentRequests || []);
-                    setHoursDebtLogs(parsed.hoursDebtLogs || []);
-                    setNotifications(parsed.notifications || []);
-                    setIncentiveReports(parsed.incentiveReports || []);
-                    setILTReports(parsed.iltReports || []);
-                    // Filter tasks: Keep cyclical tasks, remove specific tasks older than 60 days
-                    const limitDate = new Date();
-                    limitDate.setDate(limitDate.getDate() - 60);
-                    const limitStr = limitDate.toISOString().split('T')[0];
+        if (!user) return; // Wait for login
 
-                    setTasks((parsed.tasks || []).filter((t: any) => {
-                        if (t.isCyclical) return true; // Always keep cyclical definitions
-
-                        if (t.type === 'specific_date' && t.date) {
-                            return t.date >= limitStr;
-                        }
-
-                        // Fallback for tasks without specific rules, use creation date
-                        if (t.createdAt) {
-                            try {
-                                return t.createdAt.split('T')[0] >= limitStr;
-                            } catch (e) { return true; }
-                        }
-                        return true;
-                    }));
-                } else {
-                    console.warn("Storage found but empty/corrupted. Re-seeding...");
-                    throw new Error("Empty employees list");
-                }
-            } catch (error) {
-                console.error('Error parsing stored data or corrupted, resetting:', error);
-                // Fallback to seeding
-                setEmployees(INITIAL_EMPLOYEES);
-                setSchedules([]);
-                setTimeOffRequests([]);
-                setNotifications([]);
-                setTasks([]);
-                setPermanentRequests([
-                    {
-                        id: 'seed-req-eva-morning',
-                        employeeId: '1-5',
-                        type: 'morning_only',
-                        days: [1, 2, 3, 4, 5],
-                        exceptions: []
-                    },
-                    {
-                        id: 'seed-req-eva-weekend',
-                        employeeId: '1-5',
-                        type: 'specific_days_off',
-                        days: [0, 6],
-                        exceptions: []
-                    }
-                ]);
+        const checkAndMigrate = async () => {
+            // ... existing migration logic ...
+            const empSnap = await getDocs(collection(db, 'employees'));
+            if (!empSnap.empty) {
+                // Already has data in cloud
+                return;
             }
-        } else {
-            console.log("Seeding initial employees...", INITIAL_EMPLOYEES.length);
-            setEmployees(INITIAL_EMPLOYEES);
-            setSchedules([]);
-            setTimeOffRequests([]);
-            setNotifications([]);
-            setIncentiveReports([]);
-            setILTReports([]);
-            setTasks([]);
-            setPermanentRequests([
-                {
-                    id: 'seed-req-eva-morning',
-                    employeeId: '1-5', // Eva Maria Marco Anacleto
-                    type: 'morning_only',
-                    days: [1, 2, 3, 4, 5], // Lunes a Viernes
-                    exceptions: []
-                },
-                {
-                    id: 'seed-req-eva-weekend',
-                    employeeId: '1-5',
-                    type: 'specific_days_off',
-                    days: [0, 6], // Domingo y Sábado
-                    exceptions: []
+
+            const storedData = localStorage.getItem('saas_schedule_clean_v2');
+            if (storedData) {
+                try {
+                    console.log("Migrating LocalStorage to Firestore...");
+                    const parsed = JSON.parse(storedData);
+                    const batch = writeBatch(db);
+
+                    const collectionsToMigrate: Record<string, any[]> = {
+                        employees: parsed.employees || [],
+                        schedules: parsed.schedules || [],
+                        breakLogs: parsed.breakLogs || [],
+                        employeeLogs: parsed.employeeLogs || [],
+                        settings: parsed.settings || [],
+                        timeOffRequests: parsed.timeOffRequests || [],
+                        permanentRequests: parsed.permanentRequests || [],
+                        hoursDebtLogs: parsed.hoursDebtLogs || [],
+                        notifications: parsed.notifications || [],
+                        tasks: parsed.tasks || [],
+                        incentiveReports: parsed.incentiveReports || [],
+                        iltReports: parsed.iltReports || []
+                    };
+
+                    Object.entries(collectionsToMigrate).forEach(([colName, items]) => {
+                        items.forEach(item => {
+                            if (item.id || item.establishmentId) {
+                                // Settings use establishmentId as ID logic
+                                const docId = item.id || (colName === 'settings' ? item.establishmentId : generateUUID());
+                                const ref = doc(db, colName, docId);
+                                batch.set(ref, item);
+                            }
+                        });
+                    });
+
+                    await batch.commit();
+                    console.log("Migration Complete!");
+                } catch (error) {
+                    console.error("Migration failed:", error);
                 }
-            ]);
-        }
-        setIsLoaded(true);
-    }, []);
+            }
+        };
 
-    // Hotfix removed: Was potentially reverting manual changes to employee category.
+        checkAndMigrate();
+    }, [user]);
 
-    // Save to LocalStorage
+    // Firestore Listeners
     useEffect(() => {
-        if (!isLoaded) return;
-        try {
-            const data = { employees, schedules, breakLogs, employeeLogs, settings, timeOffRequests, permanentRequests, hoursDebtLogs, notifications, tasks, incentiveReports, iltReports };
-            localStorage.setItem('saas_schedule_clean_v2', JSON.stringify(data));
-        } catch (error) {
-            console.error("CRITICAL: Failed to save to localStorage. Quota might be exceeded.", error);
-            // Optionally notify user via toast if accessible, or just log for now
+        if (!user) {
+            setEmployees([]);
+            setSchedules([]);
+            // ... reset others if needed, though they will just be stale until next login
+            setIsLoaded(false);
+            return;
         }
-    }, [employees, schedules, breakLogs, employeeLogs, settings, timeOffRequests, permanentRequests, hoursDebtLogs, notifications, tasks, incentiveReports]);
 
-    // Check Cyclical Tasks daily/on-mount
+        const unsubs: (() => void)[] = [];
+        let loadedCount = 0;
+        const totalCollections = 12;
+
+        const checkLoaded = () => {
+            loadedCount++;
+            if (loadedCount >= totalCollections) {
+                setIsLoaded(true);
+            }
+        };
+
+        const subscribe = (colName: string, setter: React.Dispatch<React.SetStateAction<any[]>>) => {
+            const q = query(collection(db, colName));
+            return onSnapshot(q, (snapshot) => {
+                const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+                setter(data);
+                // We only count the FIRST load for isLoaded
+                if (loadedCount < totalCollections) checkLoaded();
+            }, (error) => {
+                console.error(`Error listening to ${colName}:`, error);
+                // Even on error we should probably 'proceed' or handle it, but for now allow loading to finish
+                if (loadedCount < totalCollections) checkLoaded();
+            });
+        };
+
+        unsubs.push(subscribe('employees', setEmployees));
+        unsubs.push(subscribe('schedules', setSchedules));
+        unsubs.push(subscribe('breakLogs', setBreakLogs));
+        unsubs.push(subscribe('employeeLogs', setEmployeeLogs));
+        unsubs.push(subscribe('settings', setSettings));
+        unsubs.push(subscribe('timeOffRequests', setTimeOffRequests));
+        unsubs.push(subscribe('permanentRequests', setPermanentRequests));
+        unsubs.push(subscribe('hoursDebtLogs', setHoursDebtLogs));
+        unsubs.push(subscribe('notifications', setNotifications));
+        unsubs.push(subscribe('tasks', setTasks));
+        unsubs.push(subscribe('incentiveReports', setIncentiveReports));
+        unsubs.push(subscribe('iltReports', setILTReports));
+
+        // Just in case some fail or are empty, ensure we don't hang forever?
+        // Firestore onSnapshot fires immediately with empty set if empty.
+
+        return () => unsubs.forEach(u => u());
+    }, [user]);
+
+    // Check Cyclical Tasks daily (Logic moved to backend trigger ideally, but keeping frontend check for now)
     useEffect(() => {
+        if (!isLoaded || tasks.length === 0) return;
+
         const today = new Date();
         const todayStr = today.toISOString().split('T')[0];
         const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon
         const dayOfMonth = today.getDate(); // 1-31
 
-        // Helper to format date + days
         const addDays = (d: Date, days: number) => {
             const res = new Date(d);
             res.setDate(res.getDate() + days);
             return res.toISOString().split('T')[0];
         };
 
-        setTasks(prevTasks => {
-            let hasChanges = false;
-            const updatedTasks = prevTasks.map(task => {
-                if (!task.isCyclical || task.isArchived) return task;
-                if (task.lastActivatedDate === todayStr) return task; // Already ran today
+        tasks.forEach(async (task) => {
+            if (!task.isCyclical || task.isArchived) return;
+            if (task.lastActivatedDate === todayStr) return;
 
-                let shouldRun = false;
+            let shouldRun = false;
 
-                if (task.cycleUnit === 'weeks') {
-                    // Weekly Frequency
-                    if (task.cyclicalDayOfWeek === dayOfWeek) {
-                        if (!task.lastActivatedDate) {
-                            shouldRun = true;
-                        } else {
-                            const lastRun = new Date(task.lastActivatedDate);
-                            const diffTime = Math.abs(today.getTime() - lastRun.getTime());
-                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                            const frequencyDays = (task.cycleFrequency || 1) * 7;
-
-                            // Allow a buffer (e.g. if it ran 14 days ago, and today matches dayOfWeek, run it)
-                            if (diffDays >= frequencyDays - 1) {
-                                shouldRun = true;
-                            }
-                        }
+            if (task.cycleUnit === 'weeks') {
+                // Weekly Frequency logic
+                if (task.cyclicalDayOfWeek === dayOfWeek) {
+                    if (!task.lastActivatedDate) {
+                        shouldRun = true;
+                    } else {
+                        const lastRun = new Date(task.lastActivatedDate);
+                        const diffTime = Math.abs(today.getTime() - lastRun.getTime());
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        const frequencyDays = (task.cycleFrequency || 1) * 7;
+                        if (diffDays >= frequencyDays - 1) shouldRun = true;
                     }
+                }
+            } else if (task.cycleUnit === 'months') {
+                // Monthly Frequency
+                if (task.cyclicalDayOfMonth === dayOfMonth) {
+                    if (!task.lastActivatedDate) {
+                        shouldRun = true;
+                    } else {
+                        const lastRun = new Date(task.lastActivatedDate);
+                        // Simple month diff check
+                        const monthsSince = (today.getFullYear() - lastRun.getFullYear()) * 12 + (today.getMonth() - lastRun.getMonth());
 
-                } else if (task.cycleUnit === 'months') {
-                    // Monthly Frequency
-                    if (task.cyclicalDayOfMonth === dayOfMonth) {
-                        if (!task.lastActivatedDate) {
+                        if (monthsSince >= (task.cycleFrequency || 1)) {
                             shouldRun = true;
-                        } else {
-                            const lastRun = new Date(task.lastActivatedDate);
-                            // Simple month diff check
-                            const monthsSince = (today.getFullYear() - lastRun.getFullYear()) * 12 + (today.getMonth() - lastRun.getMonth());
-
-                            if (monthsSince >= (task.cycleFrequency || 1)) {
-                                shouldRun = true;
-                            }
                         }
                     }
                 }
+            }
 
-                if (shouldRun) {
-                    hasChanges = true;
-                    const duration = task.durationDays || 1;
-                    const newDueDate = addDays(today, duration);
-
-                    return {
-                        ...task,
-                        status: {},
-                        lastActivatedDate: todayStr,
-                        date: newDueDate
-                    };
-                }
-                return task;
-            });
-
-            return hasChanges ? updatedTasks : prevTasks;
+            if (shouldRun) {
+                const duration = task.durationDays || 1;
+                const newDueDate = addDays(today, duration);
+                // Update Firestore
+                await updateDoc(doc(db, 'tasks', task.id), {
+                    status: {},
+                    lastActivatedDate: todayStr,
+                    date: newDueDate
+                });
+            }
         });
-    }, []);
+    }, [isLoaded, tasks]); // Dependency on tasks ensures we check when tasks load
 
 
-    const tracker = (type: 'hire' | 'termination' | 'modification', details: string, employeeId: string, establishmentId: string) => {
+    const tracker = async (type: 'hire' | 'termination' | 'modification', details: string, employeeId: string, establishmentId: string) => {
+        const id = generateUUID();
         const newLog: EmployeeLog = {
-            id: crypto.randomUUID(),
+            id,
             employeeId,
             type,
             details,
             date: new Date().toISOString(),
             establishmentId
         };
-        setEmployeeLogs(prev => [newLog, ...prev]);
+        try {
+            await setDoc(doc(db, 'employeeLogs', id), newLog);
+        } catch (e) {
+            console.error("Error logging:", e);
+        }
     };
 
-    const addEmployee = (employeeData: Omit<Employee, 'id' | 'active' | 'hoursDebt'>) => {
+    const addEmployee = async (employeeData: Omit<Employee, 'id' | 'active' | 'hoursDebt'>): Promise<string> => {
+        const id = generateUUID();
         const newEmployee: Employee = {
             ...employeeData,
-            id: crypto.randomUUID(),
+            id,
             active: true,
             hoursDebt: 0,
-            contractStartDate: employeeData.seniorityDate, // Explicitly save this as the contract start date
+            contractStartDate: employeeData.seniorityDate,
             history: [{
                 date: new Date().toISOString(),
                 type: 'hired',
@@ -366,96 +344,176 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 contractStartDate: employeeData.seniorityDate
             }]
         };
-        setEmployees(prev => [...prev, newEmployee]);
-        tracker('hire', `Alta de empleado: ${newEmployee.name} (${newEmployee.category})`, newEmployee.id, newEmployee.establishmentId);
-        return newEmployee.id;
-    };
 
-    const updateEmployee = (id: string, updates: Partial<Employee>) => {
-        console.log(`Updating employee ${id}:`, updates);
-        setEmployees(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
-        const emp = employees.find(e => e.id === id);
-        if (emp) {
-            tracker('modification', `Modificación ficha: ${Object.keys(updates).join(', ')}`, id, emp.establishmentId);
+        // Sanitize: Remove undefined values for Firestore
+        const sanitizedEmployee = JSON.parse(JSON.stringify(newEmployee));
+
+        try {
+            await setDoc(doc(db, 'employees', id), sanitizedEmployee);
+            // Only track if successful
+            tracker('hire', `Alta de empleado: ${newEmployee.name} (${newEmployee.category})`, newEmployee.id, newEmployee.establishmentId);
+            return id;
+        } catch (error) {
+            console.error("Error adding employee:", error);
+            throw error;
         }
     };
 
-    const deactivateEmployee = (id: string, reason: string, contractEndDate?: string) => {
+    const updateEmployee = async (id: string, updates: Partial<Employee>) => {
+
+
+        console.log(`[StoreContext] Updating employee ID: ${id}`, updates);
+        const emp = employees.find(e => e.id === id);
+
+        try {
+            if (emp) {
+                // Handle deletion of fields (specifically contractEndDate if null)
+                const firestoreUpdates: any = { ...updates };
+                if (firestoreUpdates.contractEndDate === null) {
+                    console.log('Deleting contractEndDate field');
+                    firestoreUpdates.contractEndDate = deleteField();
+                }
+
+                // Sanitize undefined values
+                Object.keys(firestoreUpdates).forEach(key => {
+                    if (firestoreUpdates[key] === undefined) {
+                        delete firestoreUpdates[key];
+                    }
+                });
+
+                await updateDoc(doc(db, 'employees', id), firestoreUpdates);
+                console.log(`[StoreContext] Successfully updated employee ${id} in Firestore`);
+                tracker('modification', `Modificación ficha: ${Object.keys(updates).join(', ')}`, id, emp.establishmentId);
+            } else {
+                console.error(`[StoreContext] Employee with ID ${id} not found in local state!`);
+                throw new Error(`Empleado con ID ${id} no encontrado.`);
+            }
+        } catch (error) {
+            console.error("Error updating employee:", error);
+            throw error;
+        }
+    };
+
+    const deactivateEmployee = async (id: string, reason: string, contractEndDate?: string) => {
         const emp = employees.find(e => e.id === id);
         if (emp) {
             tracker('termination', `Baja de empleado: ${emp.name}. Motivo: ${reason}`, id, emp.establishmentId);
 
-            // 1. Mark as Inactive in History
-            setEmployees(prev => prev.map(e => e.id === id ? {
-                ...e,
+            const batch = writeBatch(db);
+
+            // 1. Mark as Inactive in History & Reset Debt
+            if ((emp.hoursDebt || 0) !== 0) {
+                const logId = generateUUID();
+                const logEntry: HoursDebtLog = {
+                    id: logId,
+                    employeeId: id,
+                    amount: -(emp.hoursDebt || 0),
+                    reason: `Liquidación horas por baja (${reason})`,
+                    date: new Date().toISOString()
+                };
+                batch.set(doc(db, 'hoursDebtLogs', logId), logEntry);
+            }
+
+            const updatedEmployee = {
                 active: false,
-                contractEndDate: contractEndDate, // Save the actual end date if provided
-                history: [...(e.history || []), {
+                hoursDebt: 0,
+                contractEndDate: contractEndDate,
+                history: [...(emp.history || []), {
                     date: new Date().toISOString(),
                     type: 'terminated',
                     reason,
                     contractEndDate
                 }]
-            } : e));
+            };
+            batch.update(doc(db, 'employees', id), updatedEmployee);
 
             // 2. Remove all Permanent Requests
-            setPermanentRequests(prev => prev.filter(req => req.employeeId !== id));
+            permanentRequests.filter(req => req.employeeId === id).forEach(req => {
+                batch.delete(doc(db, 'permanentRequests', req.id));
+            });
 
-            // 3. Remove FUTURE vacations (vacations starting AFTER today)
+            // 3. Remove FUTURE vacations
             // 4. End Active Sick Leave TODAY
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            setTimeOffRequests(prev => {
-                const updatedRequests: TimeOffRequest[] = [];
-                prev.forEach(req => {
-                    if (req.employeeId !== id) {
-                        updatedRequests.push(req);
-                        return;
+            timeOffRequests.forEach(req => {
+                if (req.employeeId !== id) return;
+
+                if (req.type === 'vacation') {
+                    const start = new Date(req.startDate || req.dates[0]);
+                    if (start > today) {
+                        batch.delete(doc(db, 'timeOffRequests', req.id));
                     }
+                } else if (req.type === 'sick_leave') {
+                    const start = new Date(req.startDate || '');
+                    const end = new Date(req.endDate || '');
 
-                    // Handle Employee's Requests
-                    if (req.type === 'vacation') {
-                        // If it starts in the future, skip it (remove)
-                        const start = new Date(req.startDate || req.dates[0]);
-                        if (start > today) return;
-
-                        // If it's already started but spans future, we could trim it, 
-                        // but user asked "vacaciones que tuviese planificadas despues de su baja".
-                        // Assuming purely future ones for now or just letting past stay.
-                        // If it overlaps, maybe we should clamp end date? 
-                        // Let's just remove FUTURE ones as requested.
-                        updatedRequests.push(req);
-                    } else if (req.type === 'sick_leave') {
-                        // If active sick leave, end it today
-                        const start = new Date(req.startDate || '');
-                        const end = new Date(req.endDate || '');
-
-                        // If future strict, remove
-                        if (start > today) return;
-
-                        // If active (start <= today <= end), update endDate to today (ISO string)
-                        // Actually, endDate is string YYYY-MM-DD usually.
-                        if (end >= today || !req.endDate) {
-                            updatedRequests.push({
-                                ...req,
-                                endDate: today.toISOString().split('T')[0]
-                            });
-                        } else {
-                            // Past sick leave, keep it
-                            updatedRequests.push(req);
-                        }
-                    } else {
-                        // Other types (day_off etc), remove future? Keep simple
-                        updatedRequests.push(req);
+                    if (start > today) {
+                        batch.delete(doc(db, 'timeOffRequests', req.id));
+                    } else if (end >= today || !req.endDate) {
+                        const updatedEndDate = today.toISOString().split('T')[0];
+                        batch.update(doc(db, 'timeOffRequests', req.id), { endDate: updatedEndDate });
                     }
-                });
-                return updatedRequests;
+                }
             });
+
+            await batch.commit();
         }
     };
 
-    const reactivateEmployee = (id: string, options?: { contractType?: 'indefinido' | 'temporal', contractEndDate?: string, substitutingId?: string }) => {
+    const deleteEmployee = async (id: string) => {
+        const emp = employees.find(e => e.id === id);
+        if (!emp) return;
+
+        console.log(`Permanently deleting employee ${id} (${emp.name})`);
+
+        try {
+            const batch = writeBatch(db);
+
+            // 1. Delete the Employee Document
+            batch.delete(doc(db, 'employees', id));
+
+            // 2. Delete Settings config if it was a store (unlikely but safe)
+            // batch.delete(doc(db, 'settings', id)); // Logic collision with establishmentId, skipping to be safe
+
+            // 3. Delete Time Off Requests
+            timeOffRequests.filter(req => req.employeeId === id).forEach(req => {
+                batch.delete(doc(db, 'timeOffRequests', req.id));
+            });
+
+            // 4. Delete Permanent Requests
+            permanentRequests.filter(req => req.employeeId === id).forEach(req => {
+                batch.delete(doc(db, 'permanentRequests', req.id));
+            });
+
+            // 5. Delete Logs (Best effort, might be many)
+            // Note: In a real large app, dragging all logs might be heavy. For this scale, it's fine.
+            employeeLogs.filter(log => log.employeeId === id).forEach(log => {
+                batch.delete(doc(db, 'employeeLogs', log.id));
+            });
+
+            hoursDebtLogs.filter(log => log.employeeId === id).forEach(log => {
+                batch.delete(doc(db, 'hoursDebtLogs', log.id));
+            });
+
+            breakLogs.filter(log => log.employeeId === id).forEach(log => {
+                batch.delete(doc(db, 'breakLogs', log.id));
+            });
+
+            // 6. Delete temp hours
+            // They are inside the employee doc, so already gone.
+
+            await batch.commit();
+            tracker('termination', `Eliminación DEFINITIVA de empleado: ${emp.name}`, id, emp.establishmentId);
+
+        } catch (error) {
+            console.error("Error deleting employee:", error);
+            throw error;
+        }
+    };
+
+    const reactivateEmployee = async (id: string, options?: { contractType?: 'indefinido' | 'temporal', contractEndDate?: string, substitutingId?: string }) => {
         const emp = employees.find(e => e.id === id);
         if (emp) {
             let reason = 'Reincorporación';
@@ -469,38 +527,40 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             }
 
             tracker('hire', `Reactivación de empleado: ${emp.name}`, id, emp.establishmentId);
-            setEmployees(prev => prev.map(e => e.id === id ? {
-                ...e,
+
+            const updatedData = {
                 active: true,
-                contractType: options?.contractType || e.contractType || 'indefinido',
-                contractEndDate: options?.contractEndDate, // Clear or set
-                substitutingId: options?.substitutingId, // Set substitution
-                history: [...(e.history || []), {
+                contractType: options?.contractType || emp.contractType || 'indefinido',
+                contractEndDate: options?.contractEndDate || null,
+                substitutingId: options?.substitutingId || null,
+                history: [...(emp.history || []), {
                     date: new Date().toISOString(),
                     type: 'rehired',
                     reason: reason
                 }]
-            } : e));
+            };
+
+            // @ts-ignore
+            await updateDoc(doc(db, 'employees', id), updatedData);
         }
     };
 
     const startBreak = (employeeId: string) => {
+        const id = generateUUID();
         const newLog: BreakLog = {
-            id: crypto.randomUUID(),
+            id,
             employeeId,
             startTime: new Date().toISOString(),
             date: new Date().toISOString().split('T')[0],
         };
-        setBreakLogs(prev => [...prev, newLog]);
+        setDoc(doc(db, 'breakLogs', id), newLog);
     };
 
     const endBreak = (logId: string) => {
-        setBreakLogs(prev => prev.map(log => {
-            if (log.id === logId) {
-                return { ...log, endTime: new Date().toISOString() };
-            }
-            return log;
-        }));
+        const log = breakLogs.find(l => l.id === logId);
+        if (log) {
+            updateDoc(doc(db, 'breakLogs', logId), { endTime: new Date().toISOString() });
+        }
     };
 
     const getSettings = (establishmentId: string): StoreSettings => {
@@ -511,6 +571,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ...DEFAULT_SETTINGS,
             establishmentId,
             storeName: DEFAULT_STORE_NAMES[establishmentId] || `Tienda ${establishmentId}`,
+            password: establishmentId === '1' ? 'barbapapa' : establishmentId === '2' ? 'desgraciao' : establishmentId === 'super' ? 'sirmarcus' : 'admin',
             managerName: '',
             contactEmail: ''
         };
@@ -528,26 +589,151 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return `${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}`;
     };
 
-    const updateSettings = (newSettings: StoreSettings) => {
-        setSettings(prev => {
-            const index = prev.findIndex(s => s.establishmentId === newSettings.establishmentId);
-            if (index >= 0) {
-                const copy = [...prev];
-                copy[index] = newSettings;
-                return copy;
+    const updateSettings = async (newSettings: StoreSettings) => {
+        try {
+            // Use establishmentId as document ID
+            // Sanitize to remove undefined values which Firestore doesn't support
+            const sanitizedSettings = JSON.parse(JSON.stringify(newSettings));
+            await setDoc(doc(db, 'settings', newSettings.establishmentId), sanitizedSettings);
+        } catch (error) {
+            console.error("Error updating settings:", error);
+            throw error;
+        }
+    };
+
+    const updateHoursDebt = async (employeeId: string, amount: number, reason: string, scheduleId?: string) => {
+        // Update Employee
+        try {
+            // We need to read current hoursDebt first for atomic update? 
+            // Or just use increment(). Firestore has increment!
+            // But we don't have atomic increment import. Let's read & update or just optimistic.
+            // Actually, we can use `runTransaction` or just getDoc.
+            // For simplicity in this migration, let's just getDoc.
+            const empRef = doc(db, 'employees', employeeId);
+            // Removed unused empSnap
+            // Wait, ID is the doc ID? In addEmployee I made docID = employee.id.
+            // So I can just getDoc(doc(db, 'employees', employeeId)).
+
+            // Atomic update using increment
+            await updateDoc(empRef, { hoursDebt: increment(amount) });
+
+            const logId = generateUUID();
+            const newLog: HoursDebtLog = {
+                id: logId,
+                employeeId,
+                amount,
+                reason,
+                date: new Date().toISOString(),
+                scheduleId: scheduleId // Undefined is fine here, sanitizer removes it
+            };
+
+            // Sanitize just in case
+            const sanitizedLog = JSON.parse(JSON.stringify(newLog));
+            await setDoc(doc(db, 'hoursDebtLogs', logId), sanitizedLog);
+        } catch (e) {
+            console.error("Error updating hours debt:", e);
+            throw e; // Re-throw to alert caller
+        }
+    };
+
+
+
+    const addTempHours = async (employeeId: string, adjustment: Omit<TemporaryHoursAdjustment, 'id'>) => {
+        const empRef = doc(db, 'employees', employeeId);
+        const empDoc = await getDoc(empRef);
+        if (empDoc.exists()) {
+            const current = empDoc.data().tempHours || [];
+            const newAdj = { ...adjustment, id: generateUUID() };
+            await updateDoc(empRef, { tempHours: [...current, newAdj] });
+        }
+    };
+
+    const removeTempHours = async (employeeId: string, adjustmentId: string) => {
+        const empRef = doc(db, 'employees', employeeId);
+        const empDoc = await getDoc(empRef);
+        if (empDoc.exists()) {
+            const current = empDoc.data().tempHours || [];
+            await updateDoc(empRef, {
+                tempHours: current.filter((h: any) => h.id !== adjustmentId)
+            });
+        }
+    };
+
+    // Task Management
+    const addTask = (taskData: Omit<Task, 'id' | 'createdAt' | 'status'>) => {
+        const id = generateUUID();
+        const newTask: Task = {
+            ...taskData,
+            id,
+            createdAt: new Date().toISOString(),
+            status: {} // Initialize empty status map
+        };
+        // Sanitize to remove undefined values
+        const sanitizedTask = JSON.parse(JSON.stringify(newTask));
+        setDoc(doc(db, 'tasks', id), sanitizedTask);
+    };
+
+    const updateTask = (id: string, updates: Partial<Task>) => {
+        // Sanitize to remove undefined values
+        const sanitizedUpdates = JSON.parse(JSON.stringify(updates));
+        updateDoc(doc(db, 'tasks', id), sanitizedUpdates);
+    };
+
+    const triggerCyclicalTask = async (taskId: string) => {
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
+        const taskDoc = tasks.find(t => t.id === taskId);
+
+        if (taskDoc) {
+            const duration = taskDoc.durationDays || 1;
+            const res = new Date(today);
+            res.setDate(res.getDate() + duration);
+            const newDueDate = res.toISOString().split('T')[0];
+
+            await updateDoc(doc(db, 'tasks', taskId), {
+                status: {},
+                lastActivatedDate: todayStr,
+                date: newDueDate
+            });
+        }
+    };
+
+    const deleteTask = (id: string) => {
+        deleteDoc(doc(db, 'tasks', id));
+    };
+
+    const updateTaskStatus = (taskId: string, storeId: string, status: TaskStatus, userId?: string, initials?: string) => {
+        const updateData = {
+            [`status.${storeId}`]: {
+                storeId,
+                status,
+                lastUpdated: new Date().toISOString(),
+                completedBy: userId,
+                completedByInitials: initials
             }
-            return [...prev, newSettings];
-        });
+        };
+        // Sanitize to remove undefined values
+        const sanitizedUpdateData = JSON.parse(JSON.stringify(updateData));
+        updateDoc(doc(db, 'tasks', taskId), sanitizedUpdateData);
+    };
+
+    const updateIncentiveReport = (report: IncentiveReport) => {
+        // Use report ID as doc ID
+        setDoc(doc(db, 'incentiveReports', report.id), report);
+    };
+
+    const addILTReport = (report: ILTReport) => {
+        setDoc(doc(db, 'iltReports', report.id), report);
     };
 
     const createSchedule = (establishmentId: string, weekStartDate: string, force: boolean = false) => {
-        const existingIndex = schedules.findIndex(s => s.establishmentId === establishmentId && s.weekStartDate === weekStartDate);
+        // Find existing schedule directly from the current state
+        const existingSchedule = schedules.find(s => s.establishmentId === establishmentId && s.weekStartDate === weekStartDate);
 
-        if (existingIndex >= 0) {
+        if (existingSchedule) {
             if (!force) {
                 throw new Error('Ya existe un horario para esa semana.');
             }
-            // If forcing, we don't throw, we just proceed. The setSchedules below will filter out the old one.
         }
 
         const establishmentEmployees = employees.filter(e => e.establishmentId === establishmentId);
@@ -555,7 +741,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             throw new Error('No hay empleados para generar un horario.');
         }
 
-        // Fetch fresh settings
         const storeSettings = getSettings(establishmentId);
         const storeTimeOff = timeOffRequests.filter(r => establishmentEmployees.some(e => e.id === r.employeeId));
 
@@ -571,327 +756,304 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 .filter(pr => !pr.exceptions?.includes(weekStartDate))
         );
 
-        setSchedules(prev => {
-            if (force) {
-                // Remove existing if forcing
-                return [...prev.filter(s => !(s.establishmentId === establishmentId && s.weekStartDate === weekStartDate)), newSchedule];
-            }
-            return [...prev, newSchedule];
-        });
+        // If we are forcing (regenerating), reuse the existing ID to overwrite the document
+        // This ensures the UI updates correctly and we don't acculumate duplicate weeks
+        if (existingSchedule && force) {
+            newSchedule.id = existingSchedule.id;
+        }
 
+        // Save to Firestore
+        // Sanitize to remove undefined values
+        const sanitizedSchedule = JSON.parse(JSON.stringify(newSchedule));
+        setDoc(doc(db, 'schedules', newSchedule.id), sanitizedSchedule);
         return newSchedule;
     };
 
     const updateShift = (scheduleId: string, shiftId: string, updates: Partial<Shift>) => {
-        setSchedules(prev => prev.map(sch => {
-            if (sch.id !== scheduleId) return sch;
-
-            const updatedShifts = sch.shifts.map(shift => {
+        const schedule = schedules.find(s => s.id === scheduleId);
+        if (schedule) {
+            const updatedShifts = schedule.shifts.map(shift => {
                 if (shift.id !== shiftId) return shift;
                 return { ...shift, ...updates };
             });
-
-            return { ...sch, shifts: updatedShifts };
-        }));
+            // Sanitize to remove undefined values
+            const sanitizedShifts = JSON.parse(JSON.stringify(updatedShifts));
+            updateDoc(doc(db, 'schedules', scheduleId), { shifts: sanitizedShifts });
+        }
     };
 
     const publishSchedule = (scheduleId: string) => {
-        // Now requesting approval instead of direct publish
-        setSchedules(prev => prev.map(s => s.id === scheduleId ? {
-            ...s,
+        updateDoc(doc(db, 'schedules', scheduleId), {
             status: 'published',
             approvalStatus: 'pending',
             submittedAt: new Date().toISOString(),
             modificationStatus: 'none',
-            modificationReason: undefined
-        } : s));
+            modificationReason: null // Firestore handles null well usually, or ignore undefined
+        });
     };
 
-    const updateScheduleStatus = (scheduleId: string, status: 'draft' | 'pending' | 'approved' | 'rejected', notes?: string) => {
-        setSchedules(prev => prev.map(s => {
-            if (s.id !== scheduleId) return s;
-            return {
-                ...s,
+    const updateScheduleStatus = async (scheduleId: string, status: 'draft' | 'pending' | 'approved' | 'rejected', notes?: string) => {
+        try {
+            const schedule = schedules.find(s => s.id === scheduleId);
+            if (!schedule) throw new Error('Schedule not found');
+
+            const updates: any = {
                 approvalStatus: status,
-                supervisorNotes: notes !== undefined ? notes : s.supervisorNotes,
-                status: status === 'approved' ? 'published' : s.status,
-                // Clear snapshot if approved (cycle complete), otherwise keep it
-                originalShiftsSnapshot: status === 'approved' ? undefined : s.originalShiftsSnapshot
+                supervisorNotes: notes !== undefined ? notes : (schedule.supervisorNotes || null),
+                status: status === 'approved' ? 'published' : schedule.status,
             };
-        }));
+            if (status === 'approved') {
+                updates.originalShiftsSnapshot = null; // Clear snapshot
 
-        // Notification Logic
-        if (status === 'approved' || status === 'rejected') {
-            const sched = schedules.find(s => s.id === scheduleId);
-            if (sched) {
+                // --- CALCULATE AND APPLY HOURS DEBT ---
+                // 1. Get current store settings/employees to calculate correctly
+                // (We use current state. If employee was modified since schedule creation, it applies current contract.
+                //Ideally we should use snapshot of employee state, but for simplicty we use current.)
+                const storeSettings = getSettings(schedule.establishmentId);
+                const storeEmployees = employees.filter(e => e.establishmentId === schedule.establishmentId);
+
+                const debtAdjustments = calculateWeeklyHours(schedule, storeEmployees, storeSettings, timeOffRequests);
+
+                // Apply adjustments
+                debtAdjustments.forEach(adj => {
+                    updateHoursDebt(adj.empId, adj.amount, `Cierre Horario Semana ${schedule.weekStartDate}`, schedule.id);
+                });
+            }
+
+            // Sanitize
+            const sanitizedUpdates = JSON.parse(JSON.stringify(updates));
+            await updateDoc(doc(db, 'schedules', scheduleId), sanitizedUpdates);
+
+            // Notification Logic
+            if (status === 'approved' || status === 'rejected') {
                 const message = status === 'approved'
-                    ? `Tu horario de la semana ${sched.weekStartDate} ha sido APROBADO.`
-                    : `Tu horario de la semana ${sched.weekStartDate} ha sido RECHAZADO. Revisa las notas.`;
+                    ? `Tu horario de la semana ${schedule.weekStartDate} ha sido APROBADO.`
+                    : `Tu horario de la semana ${schedule.weekStartDate} ha sido RECHAZADO. Revisa las notas.`;
 
+                const id = generateUUID();
                 const newNotif: Notification = {
-                    id: crypto.randomUUID(),
-                    establishmentId: sched.establishmentId,
+                    id,
+                    establishmentId: schedule.establishmentId,
                     message,
                     type: status === 'approved' ? 'success' : 'error',
                     read: false,
                     createdAt: new Date().toISOString(),
                     linkTo: '/horarios'
                 };
-                setNotifications(prev => [newNotif, ...prev]);
+                await setDoc(doc(db, 'notifications', id), newNotif);
             }
+        } catch (error) {
+            console.error('Error updating schedule status:', error);
+            throw error;
         }
     };
 
-    const requestScheduleModification = (scheduleId: string, reason: string) => {
-        setSchedules(prev => prev.map(s => s.id === scheduleId ? {
-            ...s,
-            modificationStatus: 'requested',
-            modificationReason: reason
-        } : s));
+    const requestScheduleModification = async (scheduleId: string, reason: string) => {
+        try {
+            await updateDoc(doc(db, 'schedules', scheduleId), {
+                modificationStatus: 'requested',
+                modificationReason: reason
+            });
+        } catch (error) {
+            console.error('Error requesting modification:', error);
+            throw error;
+        }
     };
 
-    const respondToModificationRequest = (scheduleId: string, status: 'approved' | 'rejected', notes?: string) => {
-        setSchedules(prev => prev.map(s => s.id === scheduleId ? {
-            ...s,
-            modificationStatus: status,
-            supervisorNotes: notes || s.supervisorNotes,
-            originalShiftsSnapshot: status === 'approved' ? JSON.parse(JSON.stringify(s.shifts)) : s.originalShiftsSnapshot
-        } : s));
+    const respondToModificationRequest = async (scheduleId: string, status: 'approved' | 'rejected', notes?: string) => {
+        try {
+            const schedule = schedules.find(s => s.id === scheduleId);
+            if (!schedule) throw new Error('Schedule not found');
 
-        // Notification Logic
-        const sched = schedules.find(s => s.id === scheduleId);
-        if (sched) {
+            const updates: any = {
+                modificationStatus: status,
+                supervisorNotes: notes || schedule.supervisorNotes,
+            };
+            if (status === 'approved') {
+                updates.originalShiftsSnapshot = JSON.parse(JSON.stringify(schedule.shifts));
+                updates.approvalStatus = 'draft'; // Unlock for editing
+                updates.status = 'draft'; // Revert from 'published' so it leaves Supervisor history
+
+                // --- REVERT HOURS DEBT ---
+                // 1. Find logs associated with this schedule
+                // Note: We need to query hoursDebtLogs where scheduleId == scheduleId.
+                // Since we don't have the collection in state, we query Firestore.
+                const logsQuery = query(collection(db, 'hoursDebtLogs'), where('scheduleId', '==', scheduleId));
+                const logsSnapshot = await getDocs(logsQuery);
+
+                logsSnapshot.forEach(async (logDoc) => {
+                    const logData = logDoc.data();
+                    // Revert the amount (multiply by -1)
+                    const revertAmount = -logData.amount;
+                    await updateHoursDebt(logData.employeeId, revertAmount, `Reversión: Desbloqueo Horario ${schedule.weekStartDate}`, scheduleId);
+                });
+            }
+
+            const sanitizedUpdates = JSON.parse(JSON.stringify(updates));
+            await updateDoc(doc(db, 'schedules', scheduleId), sanitizedUpdates);
+
+            // Notification Logic
             const message = status === 'approved'
-                ? `Solicitud de modificación APROBADA para la semana ${sched.weekStartDate}. Ya puedes editar.`
-                : `Solicitud de modificación DENEGADA para la semana ${sched.weekStartDate}.`;
+                ? `Solicitud de modificación APROBADA para la semana ${schedule.weekStartDate}. Ya puedes editar.`
+                : `Solicitud de modificación DENEGADA para la semana ${schedule.weekStartDate}.`;
 
+            const id = generateUUID();
             const newNotif: Notification = {
-                id: crypto.randomUUID(),
-                establishmentId: sched.establishmentId,
+                id,
+                establishmentId: schedule.establishmentId,
                 message,
                 type: status === 'approved' ? 'success' : 'error',
                 read: false,
                 createdAt: new Date().toISOString(),
                 linkTo: '/horarios'
             };
-            setNotifications(prev => [newNotif, ...prev]);
+            await setDoc(doc(db, 'notifications', id), newNotif);
+
+        } catch (error) {
+            console.error('Error responding to modification request:', error);
+            throw error;
         }
     };
 
     const markNotificationAsRead = (id: string) => {
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+        updateDoc(doc(db, 'notifications', id), { read: true });
     };
 
     const removeNotification = (id: string) => {
-        setNotifications(prev => prev.filter(n => n.id !== id));
+        deleteDoc(doc(db, 'notifications', id));
     };
 
-    const addTimeOff = (req: Omit<TimeOffRequest, 'id' | 'status'>) => {
-        const requestId = crypto.randomUUID();
-        setTimeOffRequests(prev => [...prev, { ...req, id: requestId, status: 'approved' }]);
+    const addTimeOff = async (req: Omit<TimeOffRequest, 'id' | 'status'>) => {
+        const batch = writeBatch(db);
+        const requestId = generateUUID();
+        const newReq = { ...req, id: requestId, status: 'approved' as const };
 
-        // Notify supervisor if it's a sick leave in a published week
+        // Sanitize request
+        const sanitizedReq = JSON.parse(JSON.stringify(newReq));
+        batch.set(doc(db, 'timeOffRequests', requestId), sanitizedReq);
+
+        // Update Schedules & Notify supervisor if it's a sick leave
         if (req.type === 'sick_leave') {
             const emp = employees.find(e => e.id === req.employeeId);
-            if (!emp) return;
+            if (emp) {
+                const dates = req.dates || [];
 
-            const dates = req.dates || [];
-            // Check if any date belongs to a published schedule
-            const affectedPublishedSchedules = schedules.filter(s =>
-                s.establishmentId === emp.establishmentId &&
-                s.approvalStatus === 'approved' &&
-                dates.some(d => {
-                    const date = new Date(d);
-                    const weekStart = new Date(s.weekStartDate);
-                    const weekEnd = new Date(weekStart);
-                    weekEnd.setDate(weekEnd.getDate() + 6);
-                    return date >= weekStart && date <= weekEnd;
-                })
-            );
+                // Find schedules that contain any of these dates
+                const affectedSchedules = schedules.filter(s =>
+                    s.establishmentId === emp.establishmentId &&
+                    dates.some(d => {
+                        // Simple check: is date within [weekStart, weekStart + 6 days]
+                        const dateStr = d;
+                        const weekStartStr = s.weekStartDate;
+                        if (dateStr < weekStartStr) return false;
 
-            if (affectedPublishedSchedules.length > 0) {
-                const storeName = getSettings(emp.establishmentId).storeName || `Tienda ${emp.establishmentId}`;
-                const newNotif: Notification = {
-                    id: crypto.randomUUID(),
-                    establishmentId: 'admin',
-                    message: `Baja Médica: ${emp.name} en ${storeName} (Horario Publicado)`,
-                    type: 'warning',
-                    read: false,
-                    createdAt: new Date().toISOString(),
-                    linkTo: '/supervision'
-                };
-                setNotifications(prev => [newNotif, ...prev]);
+                        const wStart = new Date(weekStartStr);
+                        wStart.setDate(wStart.getDate() + 6);
+                        const weekEndStr = wStart.toISOString().split('T')[0];
+
+                        return dateStr >= weekStartStr && dateStr <= weekEndStr;
+                    })
+                );
+
+                // Update shifts in affected schedules
+                affectedSchedules.forEach(schedule => {
+                    let hasChanges = false;
+                    const updatedShifts = schedule.shifts.map(shift => {
+                        if (shift.employeeId === req.employeeId && dates.includes(shift.date)) {
+                            // Only update if not already correct (avoid unnecessary writes if logic runs multiple times)
+                            // and ensure we preserve the ID and other unrelated props, just change type
+                            if (shift.type !== 'sick_leave') {
+                                hasChanges = true;
+                                return { ...shift, type: 'sick_leave' };
+                            }
+                        }
+                        return shift;
+                    });
+
+                    if (hasChanges) {
+                        const sanitizedShifts = JSON.parse(JSON.stringify(updatedShifts));
+                        batch.update(doc(db, 'schedules', schedule.id), { shifts: sanitizedShifts });
+                    }
+                });
+
+                // Notification Logic for Published Schedules
+                const affectedPublishedSchedules = affectedSchedules.filter(s => s.approvalStatus === 'approved');
+                if (affectedPublishedSchedules.length > 0) {
+                    const storeName = getSettings(emp.establishmentId).storeName || `Tienda ${emp.establishmentId}`;
+                    const notifId = generateUUID();
+                    const newNotif: Notification = {
+                        id: notifId,
+                        establishmentId: 'admin',
+                        message: `Baja Médica: ${emp.name} en ${storeName} (Horario Publicado)`,
+                        type: 'warning',
+                        read: false,
+                        createdAt: new Date().toISOString(),
+                        linkTo: '/supervision'
+                    };
+                    batch.set(doc(db, 'notifications', notifId), newNotif);
+                }
             }
+        }
+
+        try {
+            await batch.commit();
+        } catch (error) {
+            console.error("Error adding time off and syncing schedules:", error);
+            throw error;
         }
     };
 
     const removeTimeOff = (id: string) => {
-        setTimeOffRequests(prev => prev.filter(r => r.id !== id));
+        deleteDoc(doc(db, 'timeOffRequests', id));
     };
 
     const updateTimeOff = (id: string, updates: Partial<TimeOffRequest>) => {
-        setTimeOffRequests(prev => prev.map(req => req.id === id ? { ...req, ...updates } : req));
+        updateDoc(doc(db, 'timeOffRequests', id), updates);
     };
 
-    const addPermanentRequest = (req: Omit<PermanentRequest, 'id'>) => {
-        setPermanentRequests(prev => [...prev, { ...req, id: crypto.randomUUID() }]);
+    const addPermanentRequest = async (req: Omit<PermanentRequest, 'id'>) => {
+        const id = generateUUID();
+        const newReq = { ...req, id };
+
+        console.log('[StoreContext] Attempting to add Permanent Request:', newReq);
+
+        try {
+            // Sanitize
+            const sanitizedReq = JSON.parse(JSON.stringify(newReq));
+            console.log('[StoreContext] Sanitized Request Payload:', sanitizedReq);
+
+            await setDoc(doc(db, 'permanentRequests', id), sanitizedReq);
+            console.log('[StoreContext] Permanent Request saved successfully to Firestore with ID:', id);
+        } catch (error) {
+            console.error("[StoreContext] Error adding permanent request:", error);
+            // Re-throw to ensure caller knows it failed
+            throw error;
+        }
     };
 
     const removePermanentRequest = (id: string) => {
-        setPermanentRequests(prev => prev.filter(p => p.id !== id));
+        deleteDoc(doc(db, 'permanentRequests', id));
     };
 
     const updatePermanentRequest = (id: string, updates: Partial<PermanentRequest>) => {
-        setPermanentRequests(prev => prev.map(req => req.id === id ? { ...req, ...updates } : req));
+        updateDoc(doc(db, 'permanentRequests', id), updates);
     };
 
-    const updateHoursDebt = (employeeId: string, amount: number, reason: string, scheduleId?: string) => {
-        setEmployees(prev => prev.map(e => e.id === employeeId ? { ...e, hoursDebt: (e.hoursDebt || 0) + amount } : e));
+    const resetData = async () => {
+        // Dangerous! Only for admin/debug.
+        // Needs to delete all collections. 
+        // For now, let's just log and maybe clear local storage for safety?
+        // But local storage is not used anymore.
+        // To clear firestore, we'd need to list and delete.
+        console.warn("resetData implementation in Firestore is dangerous and temporarily disabled.");
 
-        const newLog: HoursDebtLog = {
-            id: crypto.randomUUID(),
-            employeeId,
-            amount,
-            reason,
-            date: new Date().toISOString(),
-            scheduleId
-        };
-        setHoursDebtLogs(prev => [newLog, ...prev]);
-    };
-
-    const addTempHours = (employeeId: string, adjustment: Omit<TemporaryHoursAdjustment, 'id'>) => {
-        setEmployees(prev => prev.map(e => {
-            if (e.id !== employeeId) return e;
-            const newAdj = { ...adjustment, id: crypto.randomUUID() };
-            return {
-                ...e,
-                tempHours: [...(e.tempHours || []), newAdj]
-            };
-        }));
-    };
-
-    const removeTempHours = (employeeId: string, adjustmentId: string) => {
-        setEmployees(prev => prev.map(e => {
-            if (e.id !== employeeId) return e;
-            return {
-                ...e,
-                tempHours: (e.tempHours || []).filter(h => h.id !== adjustmentId)
-            };
-        }));
-    };
-
-    // Task Management
-    const addTask = (taskData: Omit<Task, 'id' | 'createdAt' | 'status'>) => {
-        const newTask: Task = {
-            ...taskData,
-            id: crypto.randomUUID(),
-            createdAt: new Date().toISOString(),
-            status: {} // Initialize empty status map
-        };
-        setTasks(prev => [newTask, ...prev]);
-    };
-
-    const updateTask = (id: string, updates: Partial<Task>) => {
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
-    };
-
-    const triggerCyclicalTask = (taskId: string) => {
-        const today = new Date();
-        const todayStr = today.toISOString().split('T')[0];
-
-        setTasks(prev => prev.map(task => {
-            if (task.id !== taskId) return task;
-
-            const duration = task.durationDays || 1;
-            const res = new Date(today);
-            res.setDate(res.getDate() + duration);
-            const newDueDate = res.toISOString().split('T')[0];
-
-            return {
-                ...task,
-                status: {},
-                lastActivatedDate: todayStr,
-                date: newDueDate
-            };
-        }));
-    };
-
-    const deleteTask = (id: string) => {
-        setTasks(prev => prev.filter(t => t.id !== id));
-    };
-
-    const updateTaskStatus = (taskId: string, storeId: string, status: TaskStatus, userId?: string, initials?: string) => {
-        setTasks(prev => prev.map(t => {
-            if (t.id !== taskId) return t;
-            return {
-                ...t,
-                status: {
-                    ...t.status,
-                    [storeId]: {
-                        storeId,
-                        status,
-                        lastUpdated: new Date().toISOString(),
-                        completedBy: userId,
-                        completedByInitials: initials
-                    }
-                }
-            };
-        }));
-    };
-
-    const updateIncentiveReport = (report: IncentiveReport) => {
-        setIncentiveReports(prev => {
-            const exists = prev.find(r => r.id === report.id);
-            if (exists) {
-                return prev.map(r => r.id === report.id ? report : r);
-            }
-            return [...prev, report];
-        });
-    };
-
-    const addILTReport = (report: ILTReport) => {
-        setILTReports(prev => {
-            // Replace if exists for same month/shop? Or just append? User said history.
-            // Usually, we overwrite if same ID, or append if new.
-            const exists = prev.findIndex(r => r.id === report.id);
-            if (exists >= 0) {
-                const copy = [...prev];
-                copy[exists] = report;
-                return copy;
-            }
-            return [...prev, report];
-        });
-    };
-
-    const resetData = () => {
-        setSchedules([]);
-        setHoursDebtLogs([]);
-        setEmployees(prev => {
-            const updatedEmployees = prev.map(e => ({ ...e, hoursDebt: 0 }));
-
-            // FORCE SAVE TO LOCALSTORAGE HERE TO PREVENT RACE CONDITION WITH RELOAD
-            const dataToSave = {
-                employees: updatedEmployees,
-                schedules: [],
-                breakLogs,
-                employeeLogs,
-                settings,
-                timeOffRequests,
-                permanentRequests,
-                hoursDebtLogs: [],
-                notifications: [],
-                tasks: []
-            };
-            localStorage.setItem('saas_schedule_clean_v2', JSON.stringify(dataToSave));
-
-            return updatedEmployees;
-        });
+        // Optional: clear local cache only or something.
     };
 
     return (
         <StoreContext.Provider value={{
             employees, schedules, breakLogs, employeeLogs, settings, timeOffRequests, permanentRequests,
-            addEmployee, deactivateEmployee, reactivateEmployee, updateEmployee, tracker,
+            addEmployee, deactivateEmployee, deleteEmployee, reactivateEmployee, updateEmployee, tracker,
             startBreak, endBreak,
             createSchedule, updateShift, publishSchedule, updateScheduleStatus,
             getSettings, updateSettings,
@@ -902,7 +1064,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             notifications, markNotificationAsRead, removeNotification,
             tasks, addTask, updateTask, deleteTask, triggerCyclicalTask, updateTaskStatus,
             incentiveReports, updateIncentiveReport,
-            iltReports, addILTReport
+            iltReports, addILTReport,
+            isLoaded
         }}>
 
             {children}
